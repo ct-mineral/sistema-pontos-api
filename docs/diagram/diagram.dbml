@@ -1,0 +1,53 @@
+Table users {
+  id uuid [pk]
+  suap_enrollment varchar(30) [not null, unique, note: 'Matrícula do usuário no SUAP']
+  status boolean [not null, default: true]
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+}
+
+Table groups {
+  id uuid [pk]
+  name varchar(100) [not null]
+  daily_workload_minutes int [not null, note: 'Carga horária diária em minutos']
+  status boolean [not null, default: true]
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+}
+
+Table users_groups {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  group_id uuid [not null, ref: > groups.id]
+  created_at timestamp [not null]
+
+  indexes {
+    (user_id, group_id) [unique]
+  }
+}
+
+Table qr_codes {
+  id uuid [pk]
+  code varchar(255) [not null, unique]
+  location varchar(150) [not null, note: 'Ex.: Portaria principal']
+  status boolean [not null, default: true]
+  created_at timestamp [not null]
+}
+
+Table time_records {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  qr_code_id uuid [not null, ref: > qr_codes.id]
+  type varchar(10) [not null, note: 'ENTRY ou EXIT']
+  recorded_at timestamp [not null]
+  created_at timestamp [not null]
+}
+
+Table workload_adjustments {
+  id uuid [pk]
+  user_id uuid [not null, ref: > users.id]
+  daily_workload_minutes int [not null, note: 'Carga diária específica do usuário']
+  start_date date [not null]
+  end_date date
+  created_at timestamp [not null]
+}
