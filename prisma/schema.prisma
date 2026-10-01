@@ -1,0 +1,77 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model users {
+  id              String   @id @db.Uuid
+  suap_enrollment String   @unique @db.VarChar(30)
+  status          Boolean  @default(true)
+  created_at      DateTime @db.Timestamp(6)
+  updated_at      DateTime @db.Timestamp(6)
+
+  users_groups         users_groups[]
+  time_records         time_records[]
+  workload_adjustments workload_adjustments[]
+}
+
+model groups {
+  id                     String   @id @db.Uuid
+  name                   String   @db.VarChar(100)
+  daily_workload_minutes Int
+  status                 Boolean  @default(true)
+  created_at             DateTime @db.Timestamp(6)
+  updated_at             DateTime @db.Timestamp(6)
+
+  users_groups users_groups[]
+}
+
+model users_groups {
+  id         String   @id @db.Uuid
+  user_id    String   @db.Uuid
+  group_id   String   @db.Uuid
+  created_at DateTime @db.Timestamp(6)
+
+  users  users  @relation(fields: [user_id], references: [id])
+  groups groups @relation(fields: [group_id], references: [id])
+
+  @@unique([user_id, group_id])
+}
+
+model qr_codes {
+  id         String   @id @db.Uuid
+  code       String   @unique @db.VarChar(255)
+  location   String   @db.VarChar(150)
+  status     Boolean  @default(true)
+  created_at DateTime @db.Timestamp(6)
+
+  time_records time_records[]
+}
+
+model time_records {
+  id          String   @id @db.Uuid
+  user_id     String   @db.Uuid
+  qr_code_id  String   @db.Uuid
+  type        String   @db.VarChar(10)
+  recorded_at DateTime @db.Timestamp(6)
+  created_at  DateTime @db.Timestamp(6)
+
+  users    users    @relation(fields: [user_id], references: [id])
+  qr_codes qr_codes @relation(fields: [qr_code_id], references: [id])
+}
+
+model workload_adjustments {
+  id                     String    @id @db.Uuid
+  user_id                String    @db.Uuid
+  daily_workload_minutes Int
+  start_date             DateTime  @db.Date
+  end_date               DateTime? @db.Date
+  created_at             DateTime  @db.Timestamp(6)
+
+  users users @relation(fields: [user_id], references: [id])
+}
