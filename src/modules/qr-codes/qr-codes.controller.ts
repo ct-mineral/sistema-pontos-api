@@ -17,4 +17,9 @@ export class QrCodesController {
   list() {
     return this.qrCodesService.list();
   }
+
+  @Post('update-status')
+  updateStatus(@Body() body: { id?: string; status?: boolean }) {
+    return this.qrCodesService.updateStatus(body);
+  }
 }

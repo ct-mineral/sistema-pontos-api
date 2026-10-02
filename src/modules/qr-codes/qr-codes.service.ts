@@ -69,6 +69,32 @@ export class QrCodesService {
 
     return qrCode;
   }
+
+  async updateStatus(input: { id?: string; status?: boolean }) {
+    if (!input.id || typeof input.status !== 'boolean') {
+      throw new UnprocessableEntityException(
+        'QR code e status são obrigatórios',
+      );
+    }
+
+    const current = await this.prismaService.qr_codes.findUnique({
+      where: { id: input.id },
+    });
+    if (!current) throw new NotFoundException('QR code não encontrado');
+
+    const qrCode = await this.prismaService.qr_codes.update({
+      where: { id: current.id },
+      data: { status: input.status },
+    });
+
+    return {
+      id: qrCode.id,
+      code: qrCode.code,
+      location: qrCode.location,
+      status: qrCode.status,
+      createdAt: qrCode.created_at,
+    };
+  }
 }
 
 function isUniqueViolation(error: unknown) {
