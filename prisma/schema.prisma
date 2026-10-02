@@ -52,7 +52,6 @@ model users_groups {
 
 model qr_codes {
   id         String   @id @db.Uuid
-  code       String   @unique @db.VarChar(255)
   location   String   @db.VarChar(150)
   status     Boolean  @default(true)
   created_at DateTime @db.Timestamp(6)

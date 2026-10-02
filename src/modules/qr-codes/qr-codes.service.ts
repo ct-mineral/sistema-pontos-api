@@ -1,5 +1,4 @@
 import {
-  ConflictException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -11,37 +10,22 @@ import { PrismaService } from '../../infra/prisma/prisma.service.js';
 export class QrCodesService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  async create(input: { code?: string; location?: string }) {
-    const code = input.code?.trim();
+  async create(input: { location?: string }) {
     const location = input.location?.trim();
 
-    if (!code || !location) {
-      throw new UnprocessableEntityException('Código e local são obrigatórios');
+    if (!location) {
+      throw new UnprocessableEntityException('Local é obrigatório');
     }
 
-    try {
-      const qrCode = await this.prismaService.qr_codes.create({
-        data: {
-          id: randomUUID(),
-          code,
-          location,
-          created_at: new Date(),
-        },
-      });
+    const qrCode = await this.prismaService.qr_codes.create({
+      data: {
+        id: randomUUID(),
+        location,
+        created_at: new Date(),
+      },
+    });
 
-      return {
-        id: qrCode.id,
-        code: qrCode.code,
-        location: qrCode.location,
-        status: qrCode.status,
-        createdAt: qrCode.created_at,
-      };
-    } catch (error) {
-      if (isUniqueViolation(error)) {
-        throw new ConflictException('QR code já cadastrado');
-      }
-      throw error;
-    }
+    return toQrCode(qrCode);
   }
 
   async list() {
@@ -49,18 +33,14 @@ export class QrCodesService {
       orderBy: { created_at: 'desc' },
     });
 
-    return qrCodes.map((qrCode) => ({
-      id: qrCode.id,
-      code: qrCode.code,
-      location: qrCode.location,
-      status: qrCode.status,
-      createdAt: qrCode.created_at,
-    }));
+    return qrCodes.map(toQrCode);
   }
 
-  async findActiveByCode(code: string) {
+  async findActiveById(id: string) {
+    if (!UUID.test(id)) throw new NotFoundException('QR code não encontrado');
+
     const qrCode = await this.prismaService.qr_codes.findUnique({
-      where: { code },
+      where: { id },
     });
 
     if (!qrCode?.status) {
@@ -87,21 +67,23 @@ export class QrCodesService {
       data: { status: input.status },
     });
 
-    return {
-      id: qrCode.id,
-      code: qrCode.code,
-      location: qrCode.location,
-      status: qrCode.status,
-      createdAt: qrCode.created_at,
-    };
+    return toQrCode(qrCode);
   }
 }
 
-function isUniqueViolation(error: unknown) {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    error.code === 'P2002'
-  );
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function toQrCode(qrCode: {
+  id: string;
+  location: string;
+  status: boolean;
+  created_at: Date;
+}) {
+  return {
+    id: qrCode.id,
+    location: qrCode.location,
+    status: qrCode.status,
+    createdAt: qrCode.created_at,
+  };
 }

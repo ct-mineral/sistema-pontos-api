@@ -27,7 +27,7 @@ export class TimeRecordsService {
       throw new UnprocessableEntityException('Código e tipo são obrigatórios');
     }
 
-    const qrCode = await this.qrCodesService.findActiveByCode(code);
+    const qrCode = await this.qrCodesService.findActiveById(code);
 
     const last = await this.prismaService.time_records.findFirst({
       where: { user_id: userId },
@@ -178,7 +178,7 @@ function toRecord(
     recorded_at: Date;
     created_at: Date;
   },
-  qrCode: { id: string; code: string; location: string },
+  qrCode: { id: string; location: string },
 ) {
   return {
     id: record.id,
@@ -187,7 +187,6 @@ function toRecord(
     createdAt: record.created_at,
     qrCode: {
       id: qrCode.id,
-      code: qrCode.code,
       location: qrCode.location,
     },
   };

@@ -8,7 +8,7 @@ export class QrCodesController {
 
   @Roles('SERVIDOR')
   @Post('create')
-  create(@Body() body: { code?: string; location?: string }) {
+  create(@Body() body: { location?: string }) {
     return this.qrCodesService.create(body);
   }
 
