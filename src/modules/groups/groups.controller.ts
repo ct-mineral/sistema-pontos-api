@@ -23,4 +23,10 @@ export class GroupsController {
   assign(@Body() body: { suapEnrollment?: string; groupId?: string }) {
     return this.groupsService.assign(body);
   }
+
+  @Roles('SERVIDOR')
+  @Post('reassign')
+  reassign(@Body() body: { suapEnrollment?: string; groupId?: string }) {
+    return this.groupsService.reassign(body);
+  }
 }

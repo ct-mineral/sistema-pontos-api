@@ -92,6 +92,45 @@ export class GroupsService {
 
     return membership?.groups ?? null;
   }
+
+  async reassign(input: { suapEnrollment?: string; groupId?: string }) {
+    const suapEnrollment = input.suapEnrollment?.trim();
+    if (!suapEnrollment || !input.groupId) {
+      throw new UnprocessableEntityException(
+        'Matrícula e grupo são obrigatórios',
+      );
+    }
+
+    const user = await this.prismaService.users.findUnique({
+      where: { suap_enrollment: suapEnrollment },
+    });
+    if (!user?.status) throw new NotFoundException('Usuário não encontrado');
+
+    const group = await this.prismaService.groups.findUnique({
+      where: { id: input.groupId },
+    });
+    if (!group?.status) throw new NotFoundException('Grupo não encontrado');
+
+    const membership = await this.prismaService.users_groups.findFirst({
+      where: { user_id: user.id },
+    });
+    if (!membership) throw new NotFoundException('Usuário sem grupo');
+    if (membership.group_id === group.id) {
+      throw new ConflictException('Usuário já está nesse grupo');
+    }
+
+    const link = await this.prismaService.users_groups.update({
+      where: { id: membership.id },
+      data: { group_id: group.id },
+    });
+
+    return {
+      id: link.id,
+      userId: link.user_id,
+      groupId: link.group_id,
+      createdAt: link.created_at,
+    };
+  }
 }
 
 function toGroup(
