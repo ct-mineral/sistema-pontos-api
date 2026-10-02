@@ -6,6 +6,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { AuthGuard } from './modules/auth/guards/auth.guard.js';
 import { RolesGuard } from './modules/auth/guards/roles.guard.js';
 import { QrCodesModule } from './modules/qr-codes/qr-codes.module.js';
+import { TimeRecordsModule } from './modules/time-records/time-records.module.js';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { QrCodesModule } from './modules/qr-codes/qr-codes.module.js';
     PrismaModule,
     AuthModule,
     QrCodesModule,
+    TimeRecordsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
