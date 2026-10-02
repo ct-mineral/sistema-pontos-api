@@ -7,6 +7,7 @@ import { AuthGuard } from './modules/auth/guards/auth.guard.js';
 import { RolesGuard } from './modules/auth/guards/roles.guard.js';
 import { QrCodesModule } from './modules/qr-codes/qr-codes.module.js';
 import { TimeRecordsModule } from './modules/time-records/time-records.module.js';
+import { GroupsModule } from './modules/groups/groups.module.js';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { TimeRecordsModule } from './modules/time-records/time-records.module.js
     AuthModule,
     QrCodesModule,
     TimeRecordsModule,
+    GroupsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
