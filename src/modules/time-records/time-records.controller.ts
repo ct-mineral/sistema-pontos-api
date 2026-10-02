@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../auth/constants/roles.constants.js';
 import { CurrentUser } from '../auth/decorator/current-user.decorator.js';
 import { Roles } from '../auth/decorator/roles.decorator.js';
@@ -20,5 +20,22 @@ export class TimeRecordsController {
   @Get('list-mine')
   listMine(@CurrentUser() user: AuthenticatedUser) {
     return this.timeRecordsService.listMine(user.id);
+  }
+
+  @Get('summary')
+  summary(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('date') date?: string,
+  ) {
+    return this.timeRecordsService.summary(user.id, date);
+  }
+
+  @Roles('SERVIDOR')
+  @Get('summary-by-user')
+  summaryByUser(
+    @Query('suapEnrollment') suapEnrollment?: string,
+    @Query('date') date?: string,
+  ) {
+    return this.timeRecordsService.summaryByEnrollment(suapEnrollment, date);
   }
 }

@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 import { QrCodesService } from '../qr-codes/qr-codes.service.js';
 import { RECORD_TYPES } from './constants/record-types.constants.js';
+import { GroupsService } from '../groups/groups.service.js';
+import { WorkloadAdjustmentsService } from '../workload-adjustments/workload-adjustments.service.js';
 
 type TimeRecordType = (typeof RECORD_TYPES)[number];
 
@@ -15,6 +17,8 @@ export class TimeRecordsService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly qrCodesService: QrCodesService,
+    private readonly groupsService: GroupsService,
+    private readonly workloadAdjustmentsService: WorkloadAdjustmentsService,
   ) {}
 
   async create(userId: string, input: { code?: string; type?: string }) {
@@ -58,6 +62,47 @@ export class TimeRecordsService {
 
     return records.map((record) => toRecord(record, record.qr_codes));
   }
+
+  async summary(userId: string, date?: string) {
+    const day = resolveDay(date);
+    const records = await this.prismaService.time_records.findMany({
+      where: {
+        user_id: userId,
+        recorded_at: { gte: day.start, lt: day.end },
+      },
+      orderBy: { recorded_at: 'asc' },
+    });
+    const workedMinutes = workedMinutesFrom(records, day.end);
+    const adjustment = await this.workloadAdjustmentsService.findCovering(
+      userId,
+      day.utcDay,
+    );
+    const group = adjustment
+      ? null
+      : await this.groupsService.findMembership(userId);
+    const expectedMinutes =
+      adjustment?.daily_workload_minutes ??
+      group?.daily_workload_minutes ??
+      null;
+    return {
+      date: day.date,
+      workedMinutes,
+      expectedMinutes,
+      remainingMinutes:
+        expectedMinutes === null ? null : expectedMinutes - workedMinutes,
+    };
+  }
+  async summaryByEnrollment(suapEnrollment?: string, date?: string) {
+    const enrollment = suapEnrollment?.trim();
+    if (!enrollment) {
+      throw new UnprocessableEntityException('Matrícula é obrigatória');
+    }
+    const user = await this.prismaService.users.findUnique({
+      where: { suap_enrollment: enrollment },
+    });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+    return this.summary(user.id, date);
+  }
 }
 
 function isRecordType(value: string): value is TimeRecordType {
@@ -84,4 +129,68 @@ function toRecord(
       location: qrCode.location,
     },
   };
+}
+
+function workedMinutesFrom(
+  records: { type: string; recorded_at: Date }[],
+  end: Date,
+) {
+  let open: Date | null = null;
+  let minutes = 0;
+
+  for (const record of records) {
+    if (record.type === 'entrada') {
+      open = record.recorded_at;
+      continue;
+    }
+
+    if (record.type === 'saida' && open) {
+      minutes += minutesBetween(open, record.recorded_at);
+      open = null;
+    }
+  }
+
+  if (open) {
+    const limit = new Date() < end ? new Date() : end;
+    minutes += minutesBetween(open, limit);
+  }
+
+  return minutes;
+}
+
+function minutesBetween(start: Date, end: Date) {
+  return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 60000));
+}
+
+function resolveDay(date?: string) {
+  const value = date ?? brazilToday();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new UnprocessableEntityException('Data inválida');
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  const utcDay = new Date(Date.UTC(year, month - 1, day));
+  const valid =
+    utcDay.getUTCFullYear() === year &&
+    utcDay.getUTCMonth() === month - 1 &&
+    utcDay.getUTCDate() === day;
+
+  if (!valid) throw new UnprocessableEntityException('Data inválida');
+
+  const start = new Date(Date.UTC(year, month - 1, day, 3, 0, 0));
+  return {
+    date: value,
+    utcDay,
+    start,
+    end: new Date(start.getTime() + 24 * 60 * 60 * 1000),
+  };
+}
+
+function brazilToday() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Fortaleza',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
 }
