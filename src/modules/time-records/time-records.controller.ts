@@ -38,4 +38,23 @@ export class TimeRecordsController {
   ) {
     return this.timeRecordsService.summaryByEnrollment(suapEnrollment, date);
   }
+
+  @Get('period')
+  period(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.timeRecordsService.period(user.id, from, to);
+  }
+
+  @Roles('SERVIDOR')
+  @Get('period-by-user')
+  periodByUser(
+    @Query('suapEnrollment') suapEnrollment?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.timeRecordsService.periodByEnrollment(suapEnrollment, from, to);
+  }
 }

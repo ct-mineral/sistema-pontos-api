@@ -103,6 +103,68 @@ export class TimeRecordsService {
     if (!user) throw new NotFoundException('Usuário não encontrado');
     return this.summary(user.id, date);
   }
+
+  async period(userId: string, from?: string, to?: string) {
+    if (!from || !to) {
+      throw new UnprocessableEntityException('Período é obrigatório');
+    }
+
+    const start = resolveDay(from);
+    const end = resolveDay(to);
+    if (end.utcDay < start.utcDay) {
+      throw new UnprocessableEntityException(
+        'A data final precisa ser igual ou posterior à inicial',
+      );
+    }
+
+    const dates = eachDay(start.date, end.date);
+    if (dates.length > 31) {
+      throw new UnprocessableEntityException(
+        'O período pode ter no máximo 31 dias',
+      );
+    }
+
+    const days = [];
+    for (const date of dates) {
+      days.push(await this.summary(userId, date));
+    }
+
+    const workedMinutes = days.reduce(
+      (total, day) => total + day.workedMinutes,
+      0,
+    );
+    const expectedMinutes = days.every((day) => day.expectedMinutes !== null)
+      ? days.reduce((total, day) => total + (day.expectedMinutes ?? 0), 0)
+      : null;
+
+    return {
+      from: start.date,
+      to: end.date,
+      workedMinutes,
+      expectedMinutes,
+      remainingMinutes:
+        expectedMinutes === null ? null : expectedMinutes - workedMinutes,
+      days,
+    };
+  }
+
+  async periodByEnrollment(
+    suapEnrollment?: string,
+    from?: string,
+    to?: string,
+  ) {
+    const enrollment = suapEnrollment?.trim();
+    if (!enrollment) {
+      throw new UnprocessableEntityException('Matrícula é obrigatória');
+    }
+
+    const user = await this.prismaService.users.findUnique({
+      where: { suap_enrollment: enrollment },
+    });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    return this.period(user.id, from, to);
+  }
 }
 
 function isRecordType(value: string): value is TimeRecordType {
@@ -184,6 +246,24 @@ function resolveDay(date?: string) {
     start,
     end: new Date(start.getTime() + 24 * 60 * 60 * 1000),
   };
+}
+
+function eachDay(from: string, to: string) {
+  const [fromYear, fromMonth, fromDay] = from.split('-').map(Number);
+  const [toYear, toMonth, toDay] = to.split('-').map(Number);
+  const cursor = new Date(Date.UTC(fromYear, fromMonth - 1, fromDay));
+  const end = new Date(Date.UTC(toYear, toMonth - 1, toDay));
+  const dates: string[] = [];
+
+  while (cursor <= end) {
+    const year = cursor.getUTCFullYear();
+    const month = String(cursor.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(cursor.getUTCDate()).padStart(2, '0');
+    dates.push(`${year}-${month}-${day}`);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return dates;
 }
 
 function brazilToday() {
