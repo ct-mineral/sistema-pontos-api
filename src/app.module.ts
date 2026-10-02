@@ -9,6 +9,7 @@ import { QrCodesModule } from './modules/qr-codes/qr-codes.module.js';
 import { TimeRecordsModule } from './modules/time-records/time-records.module.js';
 import { GroupsModule } from './modules/groups/groups.module.js';
 import { WorkloadAdjustmentsModule } from './modules/workload-adjustments/workload-adjustments.module.js';
+import { UsersModule } from './modules/users/users.module.js';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { WorkloadAdjustmentsModule } from './modules/workload-adjustments/worklo
     TimeRecordsModule,
     GroupsModule,
     WorkloadAdjustmentsModule,
+    UsersModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
