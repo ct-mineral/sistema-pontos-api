@@ -87,13 +87,17 @@ export class AuthService {
       throw new UnauthorizedException('Erro ao fazer login com SUAP');
 
     const now = new Date();
+    const name = profile.nome_usual?.trim() || null;
+    const photo = profile.foto?.trim() || null;
 
     const user = await this.prismaService.users.upsert({
       where: { suap_enrollment: profile.identificacao },
-      update: { role, updated_at: now },
+      update: { role, name, photo, updated_at: now },
       create: {
         id: randomUUID(),
         suap_enrollment: profile.identificacao,
+        name,
+        photo,
         role,
         created_at: now,
         updated_at: now,
@@ -119,6 +123,8 @@ export class AuthService {
     return {
       id: user.id,
       suapEnrollment: user.suap_enrollment,
+      name: user.name,
+      photo: user.photo,
       role: user.role,
     };
   }

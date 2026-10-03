@@ -10,5 +10,7 @@ export type UserRole =
 export type AuthenticatedUser = {
   id: string;
   suapEnrollment: string;
+  name: string | null;
+  photo: string | null;
   role: UserRole;
 };

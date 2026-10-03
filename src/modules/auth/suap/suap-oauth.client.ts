@@ -70,10 +70,17 @@ export class SuapOAuthClient {
         throw new UnauthorizedException('Falha ao buscar perfil');
       }
 
-      return profile;
+      return { ...profile, foto: this.absolutePhoto(profile.foto) };
     } catch (error) {
       throw new UnauthorizedException(`Falha ao buscar perfil: ${error}`);
     }
+  }
+
+  private absolutePhoto(foto: string | undefined) {
+    const value = foto?.trim();
+    if (!value) return '';
+    if (/^https?:\/\//i.test(value)) return value;
+    return `${this.baseUrl()}${value.startsWith('/') ? value : `/${value}`}`;
   }
 
   private baseUrl() {
