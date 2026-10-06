@@ -30,16 +30,24 @@ export class GroupsService {
       },
     });
 
-    return toGroup(group, 0);
+    return toGroup(group, []);
   }
 
   async list() {
     const groups = await this.prismaService.groups.findMany({
-      include: { _count: { select: { users_groups: true } } },
+      include: {
+        users_groups: {
+          include: {
+            users: {
+              select: { suap_enrollment: true, name: true, role: true },
+            },
+          },
+        },
+      },
       orderBy: { created_at: 'desc' },
     });
 
-    return groups.map((group) => toGroup(group, group._count.users_groups));
+    return groups.map((group) => toGroup(group, toPeople(group.users_groups)));
   }
 
   async assign(input: { suapEnrollment?: string; groupId?: string }) {
@@ -133,6 +141,32 @@ export class GroupsService {
   }
 }
 
+type GroupPerson = {
+  suapEnrollment: string;
+  name: string | null;
+  role: 'ALUNO' | 'PRESTADOR' | 'SERVIDOR';
+};
+
+function toPeople(
+  links: {
+    users: { suap_enrollment: string; name: string | null; role: GroupPerson['role'] };
+  }[],
+): GroupPerson[] {
+  return links
+    .map((link) => ({
+      suapEnrollment: link.users.suap_enrollment,
+      name: link.users.name,
+      role: link.users.role,
+    }))
+    .sort((left, right) => {
+      if (!left.name && right.name) return 1;
+      if (left.name && !right.name) return -1;
+      const byName = (left.name ?? '').localeCompare(right.name ?? '', 'pt-BR');
+      if (byName !== 0) return byName;
+      return left.suapEnrollment.localeCompare(right.suapEnrollment, 'pt-BR');
+    });
+}
+
 function toGroup(
   group: {
     id: string;
@@ -142,14 +176,15 @@ function toGroup(
     created_at: Date;
     updated_at: Date;
   },
-  members: number,
+  people: GroupPerson[],
 ) {
   return {
     id: group.id,
     name: group.name,
     dailyWorkloadMinutes: group.daily_workload_minutes,
     status: group.status,
-    members,
+    members: people.length,
+    people,
     createdAt: group.created_at,
     updatedAt: group.updated_at,
   };
