@@ -67,6 +67,7 @@ model time_records {
   qr_code_id  String   @db.Uuid
   type        String   @db.VarChar(10)
   recorded_at DateTime @db.Timestamp(6)
+  activity    String?  @db.VarChar(500)
   created_at  DateTime @db.Timestamp(6)
 
   users    users    @relation(fields: [user_id], references: [id])

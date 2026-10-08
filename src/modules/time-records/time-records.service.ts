@@ -50,7 +50,45 @@ export class TimeRecordsService {
       },
     });
 
-    return toRecord(record, qrCode);
+    const entry =
+      input.type === 'saida' ? await this.previousEntry(userId, record.recorded_at) : null;
+    return toRecord(record, qrCode, entry);
+  }
+
+  async saveActivity(
+    userId: string,
+    input: { exitId?: string; description?: string },
+  ) {
+    const exitId = input.exitId?.trim();
+    const description = input.description?.trim();
+    if (!exitId || !description) {
+      throw new UnprocessableEntityException('Saída e atividade são obrigatórias');
+    }
+    if (description.length > 500) {
+      throw new UnprocessableEntityException(
+        'A atividade pode ter no máximo 500 caracteres',
+      );
+    }
+
+    const exit = await this.prismaService.time_records.findFirst({
+      where: { id: exitId, user_id: userId },
+    });
+    if (!exit || exit.type !== 'saida') {
+      throw new UnprocessableEntityException('Saída inválida');
+    }
+
+    const entry = await this.previousEntry(userId, exit.recorded_at);
+    if (!entry) {
+      throw new UnprocessableEntityException('Entrada da saída não encontrada');
+    }
+
+    const updated = await this.prismaService.time_records.update({
+      where: { id: exit.id },
+      data: { activity: description },
+      include: { qr_codes: true },
+    });
+
+    return toRecord(updated, updated.qr_codes, entry);
   }
 
   async listMine(userId: string) {
@@ -60,7 +98,21 @@ export class TimeRecordsService {
       orderBy: { recorded_at: 'desc' },
     });
 
-    return records.map((record) => toRecord(record, record.qr_codes));
+    return records.map((record, index) => {
+      const previous = records[index + 1];
+      const entry =
+        record.type === 'saida' && previous?.type === 'entrada' ? previous : null;
+      return toRecord(record, record.qr_codes, entry);
+    });
+  }
+
+  private async previousEntry(userId: string, recordedAt: Date) {
+    const previous = await this.prismaService.time_records.findFirst({
+      where: { user_id: userId, recorded_at: { lt: recordedAt } },
+      orderBy: { recorded_at: 'desc' },
+    });
+    if (previous?.type !== 'entrada') return null;
+    return previous;
   }
 
   async summary(userId: string, date?: string) {
@@ -177,14 +229,18 @@ function toRecord(
     type: string;
     recorded_at: Date;
     created_at: Date;
+    activity: string | null;
   },
   qrCode: { id: string; location: string },
+  entry?: { id: string; recorded_at: Date } | null,
 ) {
   return {
     id: record.id,
     type: record.type,
     recordedAt: record.recorded_at,
     createdAt: record.created_at,
+    activity: record.activity,
+    entry: entry ? { id: entry.id, recordedAt: entry.recorded_at } : null,
     qrCode: {
       id: qrCode.id,
       location: qrCode.location,

@@ -17,6 +17,15 @@ export class TimeRecordsController {
     return this.timeRecordsService.create(user.id, body);
   }
 
+  @Roles('ALUNO', 'PRESTADOR')
+  @Post('activity')
+  saveActivity(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: { exitId?: string; description?: string },
+  ) {
+    return this.timeRecordsService.saveActivity(user.id, body);
+  }
+
   @Get('list-mine')
   listMine(@CurrentUser() user: AuthenticatedUser) {
     return this.timeRecordsService.listMine(user.id);
