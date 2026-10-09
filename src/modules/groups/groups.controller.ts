@@ -8,7 +8,7 @@ export class GroupsController {
 
   @Roles('SERVIDOR')
   @Post('create')
-  create(@Body() body: { name?: string; dailyWorkloadMinutes?: number }) {
+  create(@Body() body: { name?: string; startTime?: string; endTime?: string }) {
     return this.groupsService.create(body);
   }
 

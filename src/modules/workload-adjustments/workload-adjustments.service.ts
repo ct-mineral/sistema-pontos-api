@@ -5,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { minutesBetween, parseClock } from '../../common/clock.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 
 @Injectable()
@@ -13,21 +14,32 @@ export class WorkloadAdjustmentsService {
 
   async create(input: {
     suapEnrollment?: string;
-    dailyWorkloadMinutes?: number;
+    startTime?: string;
+    endTime?: string;
     startDate?: string;
     endDate?: string;
   }) {
     const suapEnrollment = input.suapEnrollment?.trim();
+    const start = parseClock(input.startTime);
+    const end = parseClock(input.endTime);
     const startDate = parseDate(input.startDate);
     const endDate = input.endDate ? parseDate(input.endDate) : null;
 
     if (
       !suapEnrollment ||
+      !start ||
+      !end ||
       !startDate ||
-      (input.endDate && !endDate) ||
-      !isPositiveInteger(input.dailyWorkloadMinutes)
+      (input.endDate && !endDate)
     ) {
       throw new UnprocessableEntityException('Dados do ajuste são inválidos');
+    }
+
+    const dailyWorkloadMinutes = minutesBetween(start, end);
+    if (dailyWorkloadMinutes === null) {
+      throw new UnprocessableEntityException(
+        'A saída precisa ser depois da entrada',
+      );
     }
 
     if (endDate && endDate < startDate) {
@@ -58,7 +70,9 @@ export class WorkloadAdjustmentsService {
       data: {
         id: randomUUID(),
         user_id: user.id,
-        daily_workload_minutes: input.dailyWorkloadMinutes,
+        daily_workload_minutes: dailyWorkloadMinutes,
+        start_time: start.text,
+        end_time: end.text,
         start_date: startDate,
         end_date: endDate,
         created_at: new Date(),
@@ -97,6 +111,8 @@ export class WorkloadAdjustmentsService {
 function toAdjustment(adjustment: {
   id: string;
   daily_workload_minutes: number;
+  start_time: string | null;
+  end_time: string | null;
   start_date: Date;
   end_date: Date | null;
   created_at: Date;
@@ -106,6 +122,8 @@ function toAdjustment(adjustment: {
     id: adjustment.id,
     suapEnrollment: adjustment.users.suap_enrollment,
     dailyWorkloadMinutes: adjustment.daily_workload_minutes,
+    startTime: adjustment.start_time,
+    endTime: adjustment.end_time,
     startDate: adjustment.start_date,
     endDate: adjustment.end_date,
     createdAt: adjustment.created_at,
@@ -123,8 +141,4 @@ function parseDate(value?: string) {
     date.getUTCDate() === day;
 
   return valid ? date : null;
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }

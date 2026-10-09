@@ -14,7 +14,8 @@ export class WorkloadAdjustmentsController {
     @Body()
     body: {
       suapEnrollment?: string;
-      dailyWorkloadMinutes?: number;
+      startTime?: string;
+      endTime?: string;
       startDate?: string;
       endDate?: string;
     },

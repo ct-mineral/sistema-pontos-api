@@ -5,17 +5,27 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { minutesBetween, parseClock } from '../../common/clock.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 
 @Injectable()
 export class GroupsService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  async create(input: { name?: string; dailyWorkloadMinutes?: number }) {
+  async create(input: { name?: string; startTime?: string; endTime?: string }) {
     const name = input.name?.trim();
-    if (!name || !isPositiveInteger(input.dailyWorkloadMinutes)) {
+    const start = parseClock(input.startTime);
+    const end = parseClock(input.endTime);
+    if (!name || !start || !end) {
       throw new UnprocessableEntityException(
-        'Nome e carga diária são obrigatórios',
+        'Nome, horário de entrada e horário de saída são obrigatórios',
+      );
+    }
+
+    const dailyWorkloadMinutes = minutesBetween(start, end);
+    if (dailyWorkloadMinutes === null) {
+      throw new UnprocessableEntityException(
+        'A saída precisa ser depois da entrada',
       );
     }
 
@@ -24,7 +34,9 @@ export class GroupsService {
       data: {
         id: randomUUID(),
         name,
-        daily_workload_minutes: input.dailyWorkloadMinutes,
+        daily_workload_minutes: dailyWorkloadMinutes,
+        start_time: start.text,
+        end_time: end.text,
         created_at: now,
         updated_at: now,
       },
@@ -172,6 +184,8 @@ function toGroup(
     id: string;
     name: string;
     daily_workload_minutes: number;
+    start_time: string | null;
+    end_time: string | null;
     status: boolean;
     created_at: Date;
     updated_at: Date;
@@ -182,14 +196,12 @@ function toGroup(
     id: group.id,
     name: group.name,
     dailyWorkloadMinutes: group.daily_workload_minutes,
+    startTime: group.start_time,
+    endTime: group.end_time,
     status: group.status,
     members: people.length,
     people,
     createdAt: group.created_at,
     updatedAt: group.updated_at,
   };
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
