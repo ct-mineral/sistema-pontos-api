@@ -12,9 +12,15 @@ export class TimeRecordsController {
   @Post('create')
   create(
     @CurrentUser() user: AuthenticatedUser,
-    @Body() body: { code?: string; type?: string },
+    @Body() body: { code?: string; type?: string; groupId?: string },
   ) {
     return this.timeRecordsService.create(user.id, body);
+  }
+
+  @Roles('ALUNO', 'PRESTADOR')
+  @Get('group-options')
+  groupOptions(@CurrentUser() user: AuthenticatedUser) {
+    return this.timeRecordsService.groupOptions(user.id);
   }
 
   @Roles('ALUNO', 'PRESTADOR')

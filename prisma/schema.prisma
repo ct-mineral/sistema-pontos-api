@@ -39,7 +39,9 @@ model groups {
   created_at             DateTime @db.Timestamp(6)
   updated_at             DateTime @db.Timestamp(6)
 
-  users_groups users_groups[]
+  users_groups         users_groups[]
+  time_records         time_records[]
+  workload_adjustments workload_adjustments[]
 }
 
 model users_groups {
@@ -70,10 +72,12 @@ model time_records {
   type        String   @db.VarChar(10)
   recorded_at DateTime @db.Timestamp(6)
   activity    String?  @db.VarChar(500)
+  group_id    String?  @db.Uuid
   created_at  DateTime @db.Timestamp(6)
 
   users    users    @relation(fields: [user_id], references: [id])
   qr_codes qr_codes @relation(fields: [qr_code_id], references: [id])
+  groups   groups?  @relation(fields: [group_id], references: [id])
 }
 
 model workload_adjustments {
@@ -82,9 +86,11 @@ model workload_adjustments {
   daily_workload_minutes Int
   start_time             String?   @db.VarChar(5)
   end_time               String?   @db.VarChar(5)
+  group_id               String?   @db.Uuid
   start_date             DateTime  @db.Date
   end_date               DateTime? @db.Date
   created_at             DateTime  @db.Timestamp(6)
 
-  users users @relation(fields: [user_id], references: [id])
+  users  users   @relation(fields: [user_id], references: [id])
+  groups groups? @relation(fields: [group_id], references: [id])
 }

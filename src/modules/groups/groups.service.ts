@@ -81,10 +81,10 @@ export class GroupsService {
     if (!group?.status) throw new NotFoundException('Grupo não encontrado');
 
     const membership = await this.prismaService.users_groups.findFirst({
-      where: { user_id: user.id },
+      where: { user_id: user.id, group_id: group.id },
     });
     if (membership) {
-      throw new ConflictException('Usuário já vinculado a um grupo');
+      throw new ConflictException('Usuário já está nesse grupo');
     }
 
     const link = await this.prismaService.users_groups.create({
@@ -102,6 +102,38 @@ export class GroupsService {
       groupId: link.group_id,
       createdAt: link.created_at,
     };
+  }
+
+  async findActive(userId: string) {
+    const memberships = await this.prismaService.users_groups.findMany({
+      where: { user_id: userId, groups: { status: true } },
+      include: { groups: true },
+      orderBy: { groups: { name: 'asc' } },
+    });
+
+    return memberships.map((membership) => membership.groups);
+  }
+
+  async unassign(input: { suapEnrollment?: string; groupId?: string }) {
+    const suapEnrollment = input.suapEnrollment?.trim();
+    if (!suapEnrollment || !input.groupId) {
+      throw new UnprocessableEntityException(
+        'Matrícula e grupo são obrigatórios',
+      );
+    }
+
+    const user = await this.prismaService.users.findUnique({
+      where: { suap_enrollment: suapEnrollment },
+    });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    const membership = await this.prismaService.users_groups.findFirst({
+      where: { user_id: user.id, group_id: input.groupId },
+    });
+    if (!membership) throw new NotFoundException('Usuário não está nesse grupo');
+
+    await this.prismaService.users_groups.delete({ where: { id: membership.id } });
+    return { id: membership.id, userId: user.id, groupId: input.groupId };
   }
 
   async findMembership(userId: string) {

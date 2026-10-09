@@ -4,6 +4,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { clockContains, fortalezaClock } from '../../common/clock.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 import { QrCodesService } from '../qr-codes/qr-codes.service.js';
 import { RECORD_TYPES } from './constants/record-types.constants.js';
@@ -21,7 +22,7 @@ export class TimeRecordsService {
     private readonly workloadAdjustmentsService: WorkloadAdjustmentsService,
   ) {}
 
-  async create(userId: string, input: { code?: string; type?: string }) {
+  async create(userId: string, input: { code?: string; type?: string; groupId?: string }) {
     const code = input.code?.trim();
     if (!code || !input.type || !isRecordType(input.type)) {
       throw new UnprocessableEntityException('Código e tipo são obrigatórios');
@@ -38,12 +39,18 @@ export class TimeRecordsService {
       throw new UnprocessableEntityException('Sequência de batida inválida');
     }
 
+    const groupId =
+      input.type === 'saida'
+        ? (last?.group_id ?? null)
+        : await this.resolveEntryGroup(userId, input.groupId);
+
     const now = new Date();
     const record = await this.prismaService.time_records.create({
       data: {
         id: randomUUID(),
         user_id: userId,
         qr_code_id: qrCode.id,
+        group_id: groupId,
         type: input.type,
         recorded_at: now,
         created_at: now,
@@ -52,7 +59,89 @@ export class TimeRecordsService {
 
     const entry =
       input.type === 'saida' ? await this.previousEntry(userId, record.recorded_at) : null;
-    return toRecord(record, qrCode, entry);
+    const group = groupId
+      ? await this.prismaService.groups.findUnique({
+          where: { id: groupId },
+          select: { id: true, name: true },
+        })
+      : null;
+    return toRecord(record, qrCode, entry, group);
+  }
+
+  async groupOptions(userId: string) {
+    const last = await this.prismaService.time_records.findFirst({
+      where: { user_id: userId },
+      orderBy: { recorded_at: 'desc' },
+      include: { groups: { select: { id: true, name: true, start_time: true, end_time: true } } },
+    });
+
+    if (last?.type === 'entrada') {
+      const open = last.groups;
+      return {
+        openGroup: open ? { id: open.id, name: open.name } : null,
+        choiceRequired: false,
+        groups: open
+          ? [
+              {
+                id: open.id,
+                name: open.name,
+                startTime: open.start_time,
+                endTime: open.end_time,
+                matchesNow: true,
+              },
+            ]
+          : [],
+      };
+    }
+
+    const day = resolveDay();
+    const memberships = await this.groupsService.findActive(userId);
+    const adjustments = await this.workloadAdjustmentsService.findCoveringAll(
+      userId,
+      day.utcDay,
+    );
+    const now = fortalezaClock();
+    const groups = memberships.map((group) => {
+      const specific = adjustments.find((item) => item.group_id === group.id);
+      const startTime = specific?.start_time ?? group.start_time;
+      const endTime = specific?.end_time ?? group.end_time;
+      return {
+        id: group.id,
+        name: group.name,
+        startTime,
+        endTime,
+        matchesNow: Boolean(
+          startTime && endTime && clockContains(now, startTime, endTime),
+        ),
+      };
+    });
+    const matching = groups.filter((group) => group.matchesNow);
+    return {
+      openGroup: null,
+      choiceRequired: groups.length > 1 && matching.length !== 1,
+      groups,
+    };
+  }
+
+  private async resolveEntryGroup(userId: string, requestedId?: string) {
+    const options = await this.groupOptions(userId);
+    if (options.groups.length === 0) {
+      throw new UnprocessableEntityException('Usuário sem grupo');
+    }
+
+    const requested = requestedId?.trim();
+    if (requested) {
+      const chosen = options.groups.find((group) => group.id === requested);
+      if (!chosen) throw new UnprocessableEntityException('Grupo inválido');
+      return chosen.id;
+    }
+
+    if (options.choiceRequired) {
+      throw new UnprocessableEntityException('Informe o grupo da batida');
+    }
+
+    const matched = options.groups.filter((group) => group.matchesNow);
+    return (matched[0] ?? options.groups[0]).id;
   }
 
   async saveActivity(
@@ -85,16 +174,16 @@ export class TimeRecordsService {
     const updated = await this.prismaService.time_records.update({
       where: { id: exit.id },
       data: { activity: description },
-      include: { qr_codes: true },
+      include: { qr_codes: true, groups: { select: { id: true, name: true } } },
     });
 
-    return toRecord(updated, updated.qr_codes, entry);
+    return toRecord(updated, updated.qr_codes, entry, updated.groups);
   }
 
   async listMine(userId: string) {
     const records = await this.prismaService.time_records.findMany({
       where: { user_id: userId },
-      include: { qr_codes: true },
+      include: { qr_codes: true, groups: { select: { id: true, name: true } } },
       orderBy: { recorded_at: 'desc' },
     });
 
@@ -102,7 +191,7 @@ export class TimeRecordsService {
       const previous = records[index + 1];
       const entry =
         record.type === 'saida' && previous?.type === 'entrada' ? previous : null;
-      return toRecord(record, record.qr_codes, entry);
+      return toRecord(record, record.qr_codes, entry, record.groups);
     });
   }
 
@@ -125,17 +214,7 @@ export class TimeRecordsService {
       orderBy: { recorded_at: 'asc' },
     });
     const workedMinutes = workedMinutesFrom(records, day.end);
-    const adjustment = await this.workloadAdjustmentsService.findCovering(
-      userId,
-      day.utcDay,
-    );
-    const group = adjustment
-      ? null
-      : await this.groupsService.findMembership(userId);
-    const expectedMinutes =
-      adjustment?.daily_workload_minutes ??
-      group?.daily_workload_minutes ??
-      null;
+    const expectedMinutes = await this.expectedMinutes(userId, day.utcDay);
     return {
       date: day.date,
       workedMinutes,
@@ -144,6 +223,26 @@ export class TimeRecordsService {
         expectedMinutes === null ? null : expectedMinutes - workedMinutes,
     };
   }
+  private async expectedMinutes(userId: string, day: Date) {
+    const groups = await this.groupsService.findActive(userId);
+    const adjustments = await this.workloadAdjustmentsService.findCoveringAll(
+      userId,
+      day,
+    );
+    const legacy = adjustments.find((item) => !item.group_id);
+    if (groups.length === 0) return legacy?.daily_workload_minutes ?? null;
+
+    const specific = adjustments.filter((item) => item.group_id);
+    if (groups.length === 1 && legacy && specific.length === 0) {
+      return legacy.daily_workload_minutes;
+    }
+
+    return groups.reduce((total, group) => {
+      const adjustment = specific.find((item) => item.group_id === group.id);
+      return total + (adjustment?.daily_workload_minutes ?? group.daily_workload_minutes);
+    }, 0);
+  }
+
   async summaryByEnrollment(suapEnrollment?: string, date?: string) {
     const enrollment = suapEnrollment?.trim();
     if (!enrollment) {
@@ -233,6 +332,7 @@ function toRecord(
   },
   qrCode: { id: string; location: string },
   entry?: { id: string; recorded_at: Date } | null,
+  group?: { id: string; name: string } | null,
 ) {
   return {
     id: record.id,
@@ -241,6 +341,7 @@ function toRecord(
     createdAt: record.created_at,
     activity: record.activity,
     entry: entry ? { id: entry.id, recordedAt: entry.recorded_at } : null,
+    group: group ? { id: group.id, name: group.name } : null,
     qrCode: {
       id: qrCode.id,
       location: qrCode.location,

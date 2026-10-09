@@ -14,6 +14,7 @@ export class WorkloadAdjustmentsController {
     @Body()
     body: {
       suapEnrollment?: string;
+      groupId?: string;
       startTime?: string;
       endTime?: string;
       startDate?: string;

@@ -14,12 +14,14 @@ export class WorkloadAdjustmentsService {
 
   async create(input: {
     suapEnrollment?: string;
+    groupId?: string;
     startTime?: string;
     endTime?: string;
     startDate?: string;
     endDate?: string;
   }) {
     const suapEnrollment = input.suapEnrollment?.trim();
+    const groupId = input.groupId?.trim();
     const start = parseClock(input.startTime);
     const end = parseClock(input.endTime);
     const startDate = parseDate(input.startDate);
@@ -27,6 +29,7 @@ export class WorkloadAdjustmentsService {
 
     if (
       !suapEnrollment ||
+      !groupId ||
       !start ||
       !end ||
       !startDate ||
@@ -53,9 +56,22 @@ export class WorkloadAdjustmentsService {
     });
     if (!user?.status) throw new NotFoundException('Usuário não encontrado');
 
+    const group = await this.prismaService.groups.findUnique({
+      where: { id: groupId },
+    });
+    if (!group?.status) throw new NotFoundException('Grupo não encontrado');
+
+    const membership = await this.prismaService.users_groups.findFirst({
+      where: { user_id: user.id, group_id: group.id },
+    });
+    if (!membership) {
+      throw new UnprocessableEntityException('Usuário não está nesse grupo');
+    }
+
     const overlap = await this.prismaService.workload_adjustments.findFirst({
       where: {
         user_id: user.id,
+        group_id: group.id,
         AND: [
           { OR: [{ end_date: null }, { end_date: { gte: startDate } }] },
           endDate ? { start_date: { lte: endDate } } : {},
@@ -73,11 +89,15 @@ export class WorkloadAdjustmentsService {
         daily_workload_minutes: dailyWorkloadMinutes,
         start_time: start.text,
         end_time: end.text,
+        group_id: group.id,
         start_date: startDate,
         end_date: endDate,
         created_at: new Date(),
       },
-      include: { users: { select: { suap_enrollment: true } } },
+      include: {
+        users: { select: { suap_enrollment: true } },
+        groups: { select: { id: true, name: true } },
+      },
     });
 
     return toAdjustment(adjustment);
@@ -89,15 +109,18 @@ export class WorkloadAdjustmentsService {
       where: enrollment
         ? { users: { suap_enrollment: enrollment } }
         : undefined,
-      include: { users: { select: { suap_enrollment: true } } },
+      include: {
+        users: { select: { suap_enrollment: true } },
+        groups: { select: { id: true, name: true } },
+      },
       orderBy: { start_date: 'desc' },
     });
 
     return adjustments.map(toAdjustment);
   }
 
-  findCovering(userId: string, day: Date) {
-    return this.prismaService.workload_adjustments.findFirst({
+  findCoveringAll(userId: string, day: Date) {
+    return this.prismaService.workload_adjustments.findMany({
       where: {
         user_id: userId,
         start_date: { lte: day },
@@ -117,10 +140,13 @@ function toAdjustment(adjustment: {
   end_date: Date | null;
   created_at: Date;
   users: { suap_enrollment: string };
+  groups: { id: string; name: string } | null;
 }) {
   return {
     id: adjustment.id,
     suapEnrollment: adjustment.users.suap_enrollment,
+    groupId: adjustment.groups?.id ?? null,
+    groupName: adjustment.groups?.name ?? null,
     dailyWorkloadMinutes: adjustment.daily_workload_minutes,
     startTime: adjustment.start_time,
     endTime: adjustment.end_time,
