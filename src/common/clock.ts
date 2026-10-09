@@ -41,5 +41,5 @@ export function fortalezaClock(date = new Date()) {
 }
 
 export function clockContains(clock: string, start: string, end: string) {
-  return clock >= start && clock < end;
+  return clock >= start && clock <= end;
 }

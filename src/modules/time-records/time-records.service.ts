@@ -118,7 +118,7 @@ export class TimeRecordsService {
     const matching = groups.filter((group) => group.matchesNow);
     return {
       openGroup: null,
-      choiceRequired: groups.length > 1 && matching.length !== 1,
+      choiceRequired: matching.length > 1,
       groups,
     };
   }
@@ -129,19 +129,24 @@ export class TimeRecordsService {
       throw new UnprocessableEntityException('Usuário sem grupo');
     }
 
+    const matching = options.groups.filter((group) => group.matchesNow);
     const requested = requestedId?.trim();
     if (requested) {
       const chosen = options.groups.find((group) => group.id === requested);
       if (!chosen) throw new UnprocessableEntityException('Grupo inválido');
+      if (!chosen.matchesNow) {
+        throw new UnprocessableEntityException(entryWindowMessage(chosen));
+      }
       return chosen.id;
     }
 
-    if (options.choiceRequired) {
+    if (matching.length > 1) {
       throw new UnprocessableEntityException('Informe o grupo da batida');
     }
-
-    const matched = options.groups.filter((group) => group.matchesNow);
-    return (matched[0] ?? options.groups[0]).id;
+    if (matching.length === 0) {
+      throw new UnprocessableEntityException(entryWindowMessage(options.groups));
+    }
+    return matching[0].id;
   }
 
   async saveActivity(
@@ -316,6 +321,18 @@ export class TimeRecordsService {
 
     return this.period(user.id, from, to);
   }
+}
+
+function entryWindowMessage(
+  group:
+    | { startTime: string | null; endTime: string | null }
+    | { startTime: string | null; endTime: string | null }[],
+) {
+  const only = Array.isArray(group) ? (group.length === 1 ? group[0] : null) : group;
+  if (only?.startTime && only.endTime) {
+    return `A entrada só pode ser registrada entre ${only.startTime} e ${only.endTime}`;
+  }
+  return 'A entrada está fora do horário do grupo';
 }
 
 function isRecordType(value: string): value is TimeRecordType {
