@@ -226,6 +226,12 @@ export class TimeRecordsService {
       expectedMinutes,
       remainingMinutes:
         expectedMinutes === null ? null : expectedMinutes - workedMinutes,
+      activities: records
+        .filter((record) => record.type === 'saida')
+        .map((record) => ({
+          recordedAt: record.recorded_at,
+          description: record.activity,
+        })),
     };
   }
   private async expectedMinutes(userId: string, day: Date) {
