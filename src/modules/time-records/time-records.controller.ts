@@ -8,7 +8,7 @@ import { TimeRecordsService } from './time-records.service.js';
 export class TimeRecordsController {
   constructor(private readonly timeRecordsService: TimeRecordsService) {}
 
-  @Roles('ALUNO', 'PRESTADOR')
+  @Roles('ALUNO', 'PRESTADOR', 'SERVIDOR')
   @Post('create')
   create(
     @CurrentUser() user: AuthenticatedUser,
@@ -17,13 +17,13 @@ export class TimeRecordsController {
     return this.timeRecordsService.create(user.id, body);
   }
 
-  @Roles('ALUNO', 'PRESTADOR')
+  @Roles('ALUNO', 'PRESTADOR', 'SERVIDOR')
   @Get('group-options')
   groupOptions(@CurrentUser() user: AuthenticatedUser) {
     return this.timeRecordsService.groupOptions(user.id);
   }
 
-  @Roles('ALUNO', 'PRESTADOR')
+  @Roles('ALUNO', 'PRESTADOR', 'SERVIDOR')
   @Post('activity')
   saveActivity(
     @CurrentUser() user: AuthenticatedUser,
