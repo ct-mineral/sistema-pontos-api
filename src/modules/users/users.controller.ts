@@ -1,10 +1,16 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { Roles } from '../auth/decorator/roles.decorator.js';
 import { UsersService } from './users.service.js';
 
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  @Roles('SERVIDOR')
+  @Get('list')
+  list() {
+    return this.usersService.list();
+  }
 
   @Roles('SERVIDOR')
   @Post('authorize')

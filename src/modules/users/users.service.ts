@@ -43,6 +43,13 @@ export class UsersService {
     return toUser(user);
   }
 
+  async list() {
+    const users = await this.prismaService.users.findMany({
+      orderBy: { created_at: 'desc' },
+    });
+    return users.map(toUser);
+  }
+
   async updateStatus(input: { suapEnrollment?: string; status?: boolean }) {
     const suapEnrollment = input.suapEnrollment?.trim();
     if (!suapEnrollment || typeof input.status !== 'boolean') {
@@ -72,12 +79,14 @@ function isUserRole(role: string | undefined): role is UserRole {
 function toUser(user: {
   id: string;
   suap_enrollment: string;
+  name: string | null;
   role: UserRole;
   status: boolean;
 }) {
   return {
     id: user.id,
     suapEnrollment: user.suap_enrollment,
+    name: user.name,
     role: user.role,
     status: user.status,
   };
