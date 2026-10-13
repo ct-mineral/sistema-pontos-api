@@ -83,25 +83,19 @@ export class AuthService {
       where: { suap_enrollment: profile.identificacao },
     });
 
-    if (current && !current.status)
-      throw new UnauthorizedException('Erro ao fazer login com SUAP');
+    if (!current?.status) {
+      throw new UnauthorizedException(
+        'Usuário não autorizado para acessar o sistema',
+      );
+    }
 
     const now = new Date();
     const name = profile.nome_usual?.trim() || null;
     const photo = profile.foto?.trim() || null;
 
-    const user = await this.prismaService.users.upsert({
-      where: { suap_enrollment: profile.identificacao },
-      update: { role, name, photo, updated_at: now },
-      create: {
-        id: randomUUID(),
-        suap_enrollment: profile.identificacao,
-        name,
-        photo,
-        role,
-        created_at: now,
-        updated_at: now,
-      },
+    const user = await this.prismaService.users.update({
+      where: { id: current.id },
+      data: { role, name, photo, updated_at: now },
     });
 
     return { user, platform: expected.platform };
