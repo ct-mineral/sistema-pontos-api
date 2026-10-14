@@ -35,4 +35,25 @@ export class GroupsController {
   unassign(@Body() body: { suapEnrollment?: string; groupId?: string }) {
     return this.groupsService.unassign(body);
   }
+
+  @Roles('SERVIDOR')
+  @Post('update')
+  update(
+    @Body()
+    body: { id?: string; name?: string; startTime?: string; endTime?: string },
+  ) {
+    return this.groupsService.update(body);
+  }
+
+  @Roles('SERVIDOR')
+  @Post('update-status')
+  updateStatus(@Body() body: { id?: string; status?: boolean }) {
+    return this.groupsService.updateStatus(body);
+  }
+
+  @Roles('SERVIDOR')
+  @Post('delete')
+  remove(@Body() body: { id?: string }) {
+    return this.groupsService.remove(body);
+  }
 }

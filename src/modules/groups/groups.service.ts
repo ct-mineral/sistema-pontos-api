@@ -13,36 +13,100 @@ export class GroupsService {
   constructor(private readonly prismaService: PrismaService) {}
 
   async create(input: { name?: string; startTime?: string; endTime?: string }) {
-    const name = input.name?.trim();
-    const start = parseClock(input.startTime);
-    const end = parseClock(input.endTime);
-    if (!name || !start || !end) {
-      throw new UnprocessableEntityException(
-        'Nome, horário de entrada e horário de saída são obrigatórios',
-      );
-    }
-
-    const dailyWorkloadMinutes = minutesBetween(start, end);
-    if (dailyWorkloadMinutes === null) {
-      throw new UnprocessableEntityException(
-        'A saída precisa ser depois da entrada',
-      );
-    }
-
+    const schedule = readSchedule(input);
     const now = new Date();
     const group = await this.prismaService.groups.create({
       data: {
         id: randomUUID(),
-        name,
-        daily_workload_minutes: dailyWorkloadMinutes,
-        start_time: start.text,
-        end_time: end.text,
+        name: schedule.name,
+        daily_workload_minutes: schedule.dailyWorkloadMinutes,
+        start_time: schedule.start.text,
+        end_time: schedule.end.text,
         created_at: now,
         updated_at: now,
       },
     });
 
     return toGroup(group, []);
+  }
+
+  async update(input: {
+    id?: string;
+    name?: string;
+    startTime?: string;
+    endTime?: string;
+  }) {
+    if (!input.id) {
+      throw new UnprocessableEntityException('Grupo é obrigatório');
+    }
+    const schedule = readSchedule(input);
+    const current = await this.prismaService.groups.findUnique({
+      where: { id: input.id },
+    });
+    if (!current) throw new NotFoundException('Grupo não encontrado');
+
+    const group = await this.prismaService.groups.update({
+      where: { id: current.id },
+      data: {
+        name: schedule.name,
+        daily_workload_minutes: schedule.dailyWorkloadMinutes,
+        start_time: schedule.start.text,
+        end_time: schedule.end.text,
+        updated_at: new Date(),
+      },
+    });
+
+    return toGroup(group, []);
+  }
+
+  async updateStatus(input: { id?: string; status?: boolean }) {
+    if (!input.id || typeof input.status !== 'boolean') {
+      throw new UnprocessableEntityException('Grupo e status são obrigatórios');
+    }
+
+    const current = await this.prismaService.groups.findUnique({
+      where: { id: input.id },
+    });
+    if (!current) throw new NotFoundException('Grupo não encontrado');
+
+    const group = await this.prismaService.groups.update({
+      where: { id: current.id },
+      data: { status: input.status, updated_at: new Date() },
+    });
+
+    return toGroup(group, []);
+  }
+
+  async remove(input: { id?: string }) {
+    if (!input.id) {
+      throw new UnprocessableEntityException('Grupo é obrigatório');
+    }
+
+    const current = await this.prismaService.groups.findUnique({
+      where: { id: input.id },
+    });
+    if (!current) throw new NotFoundException('Grupo não encontrado');
+
+    const [punches, adjustments] = await Promise.all([
+      this.prismaService.time_records.count({ where: { group_id: current.id } }),
+      this.prismaService.workload_adjustments.count({
+        where: { group_id: current.id },
+      }),
+    ]);
+    if (punches > 0 || adjustments > 0) {
+      throw new ConflictException(
+        'Não é possível excluir um grupo que já tem ponto ou ajuste de carga',
+      );
+    }
+
+    await this.prismaService.$transaction([
+      this.prismaService.users_groups.deleteMany({
+        where: { group_id: current.id },
+      }),
+      this.prismaService.groups.delete({ where: { id: current.id } }),
+    ]);
+
+    return { id: current.id };
   }
 
   async list() {
@@ -185,10 +249,34 @@ export class GroupsService {
   }
 }
 
+function readSchedule(input: {
+  name?: string;
+  startTime?: string;
+  endTime?: string;
+}) {
+  const name = input.name?.trim();
+  const start = parseClock(input.startTime);
+  const end = parseClock(input.endTime);
+  if (!name || !start || !end) {
+    throw new UnprocessableEntityException(
+      'Nome, horário de entrada e horário de saída são obrigatórios',
+    );
+  }
+
+  const dailyWorkloadMinutes = minutesBetween(start, end);
+  if (dailyWorkloadMinutes === null) {
+    throw new UnprocessableEntityException(
+      'A saída precisa ser depois da entrada',
+    );
+  }
+
+  return { name, start, end, dailyWorkloadMinutes };
+}
+
 type GroupPerson = {
   suapEnrollment: string;
   name: string | null;
-  role: 'ALUNO' | 'PRESTADOR' | 'SERVIDOR';
+  role: 'ALUNO' | 'PRESTADOR' | 'SERVIDOR' | null;
 };
 
 function toPeople(

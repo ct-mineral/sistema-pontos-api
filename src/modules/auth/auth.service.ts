@@ -108,7 +108,7 @@ export class AuthService {
       where: { id: userId },
     });
 
-    if (!user?.status) {
+    if (!user?.status || !user.role) {
       throw new UnauthorizedException(
         'Usuário não autorizado para acessar o sistema',
       );

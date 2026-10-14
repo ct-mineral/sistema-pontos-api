@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -68,6 +69,48 @@ export class QrCodesService {
     });
 
     return toQrCode(qrCode);
+  }
+
+  async update(input: { id?: string; location?: string }) {
+    const location = input.location?.trim();
+    if (!input.id || !location) {
+      throw new UnprocessableEntityException('QR code e local são obrigatórios');
+    }
+
+    const current = await this.prismaService.qr_codes.findUnique({
+      where: { id: input.id },
+    });
+    if (!current) throw new NotFoundException('QR code não encontrado');
+
+    const qrCode = await this.prismaService.qr_codes.update({
+      where: { id: current.id },
+      data: { location },
+    });
+
+    return toQrCode(qrCode);
+  }
+
+  async remove(input: { id?: string }) {
+    if (!input.id) {
+      throw new UnprocessableEntityException('QR code é obrigatório');
+    }
+
+    const current = await this.prismaService.qr_codes.findUnique({
+      where: { id: input.id },
+    });
+    if (!current) throw new NotFoundException('QR code não encontrado');
+
+    const punches = await this.prismaService.time_records.count({
+      where: { qr_code_id: current.id },
+    });
+    if (punches > 0) {
+      throw new ConflictException(
+        'Não é possível excluir um QR code que já foi usado em registros de ponto',
+      );
+    }
+
+    await this.prismaService.qr_codes.delete({ where: { id: current.id } });
+    return { id: current.id };
   }
 }
 

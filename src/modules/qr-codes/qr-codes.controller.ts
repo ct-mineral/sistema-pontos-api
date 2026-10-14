@@ -18,8 +18,21 @@ export class QrCodesController {
     return this.qrCodesService.list();
   }
 
+  @Roles('SERVIDOR')
   @Post('update-status')
   updateStatus(@Body() body: { id?: string; status?: boolean }) {
     return this.qrCodesService.updateStatus(body);
+  }
+
+  @Roles('SERVIDOR')
+  @Post('update')
+  update(@Body() body: { id?: string; location?: string }) {
+    return this.qrCodesService.update(body);
+  }
+
+  @Roles('SERVIDOR')
+  @Post('delete')
+  remove(@Body() body: { id?: string }) {
+    return this.qrCodesService.remove(body);
   }
 }

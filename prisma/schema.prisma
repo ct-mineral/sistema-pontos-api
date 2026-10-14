@@ -19,7 +19,7 @@ model users {
   suap_enrollment String   @unique @db.VarChar(30)
   name            String?  @db.VarChar(150)
   photo           String?  @db.VarChar(500)
-  role            UserRole
+  role            UserRole?
   status          Boolean  @default(true)
   created_at      DateTime @db.Timestamp(6)
   updated_at      DateTime @db.Timestamp(6)

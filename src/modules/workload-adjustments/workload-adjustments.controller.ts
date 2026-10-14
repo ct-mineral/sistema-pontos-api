@@ -25,6 +25,29 @@ export class WorkloadAdjustmentsController {
   }
 
   @Roles('SERVIDOR')
+  @Post('update')
+  update(
+    @Body()
+    body: {
+      id?: string;
+      suapEnrollment?: string;
+      groupId?: string;
+      startTime?: string;
+      endTime?: string;
+      startDate?: string;
+      endDate?: string;
+    },
+  ) {
+    return this.workloadAdjustmentsService.update(body);
+  }
+
+  @Roles('SERVIDOR')
+  @Post('delete')
+  remove(@Body() body: { id?: string }) {
+    return this.workloadAdjustmentsService.remove(body);
+  }
+
+  @Roles('SERVIDOR')
   @Get('list')
   list(@Query('suapEnrollment') suapEnrollment?: string) {
     return this.workloadAdjustmentsService.list(suapEnrollment);

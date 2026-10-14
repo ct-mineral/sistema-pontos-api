@@ -12,14 +12,102 @@ import { PrismaService } from '../../infra/prisma/prisma.service.js';
 export class WorkloadAdjustmentsService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  async create(input: {
-    suapEnrollment?: string;
-    groupId?: string;
-    startTime?: string;
-    endTime?: string;
-    startDate?: string;
-    endDate?: string;
-  }) {
+  async create(input: AdjustmentInput) {
+    const prepared = await this.prepare(input);
+
+    const adjustment = await this.prismaService.workload_adjustments.create({
+      data: {
+        id: randomUUID(),
+        user_id: prepared.user.id,
+        daily_workload_minutes: prepared.dailyWorkloadMinutes,
+        start_time: prepared.start.text,
+        end_time: prepared.end.text,
+        group_id: prepared.group.id,
+        start_date: prepared.startDate,
+        end_date: prepared.endDate,
+        created_at: new Date(),
+      },
+      include: adjustmentInclude,
+    });
+
+    return toAdjustment(adjustment);
+  }
+
+  async update(input: AdjustmentInput & { id?: string }) {
+    if (!input.id) {
+      throw new UnprocessableEntityException('Ajuste é obrigatório');
+    }
+
+    const current = await this.prismaService.workload_adjustments.findUnique({
+      where: { id: input.id },
+    });
+    if (!current) throw new NotFoundException('Ajuste não encontrado');
+
+    const prepared = await this.prepare(input, {
+      excludeId: current.id,
+      currentGroupId: current.group_id,
+    });
+    const adjustment = await this.prismaService.workload_adjustments.update({
+      where: { id: current.id },
+      data: {
+        user_id: prepared.user.id,
+        daily_workload_minutes: prepared.dailyWorkloadMinutes,
+        start_time: prepared.start.text,
+        end_time: prepared.end.text,
+        group_id: prepared.group.id,
+        start_date: prepared.startDate,
+        end_date: prepared.endDate,
+      },
+      include: adjustmentInclude,
+    });
+
+    return toAdjustment(adjustment);
+  }
+
+  async remove(input: { id?: string }) {
+    if (!input.id) {
+      throw new UnprocessableEntityException('Ajuste é obrigatório');
+    }
+
+    const current = await this.prismaService.workload_adjustments.findUnique({
+      where: { id: input.id },
+    });
+    if (!current) throw new NotFoundException('Ajuste não encontrado');
+
+    await this.prismaService.workload_adjustments.delete({
+      where: { id: current.id },
+    });
+    return { id: current.id };
+  }
+
+  async list(suapEnrollment?: string) {
+    const enrollment = suapEnrollment?.trim();
+    const adjustments = await this.prismaService.workload_adjustments.findMany({
+      where: enrollment
+        ? { users: { suap_enrollment: enrollment } }
+        : undefined,
+      include: adjustmentInclude,
+      orderBy: { start_date: 'desc' },
+    });
+
+    return adjustments.map(toAdjustment);
+  }
+
+  findCoveringAll(userId: string, day: Date) {
+    return this.prismaService.workload_adjustments.findMany({
+      where: {
+        user_id: userId,
+        start_date: { lte: day },
+        OR: [{ end_date: null }, { end_date: { gte: day } }],
+      },
+      orderBy: { start_date: 'desc' },
+    });
+  }
+
+  private async prepare(
+    input: AdjustmentInput,
+    options?: { excludeId?: string; currentGroupId?: string | null },
+  ) {
     const suapEnrollment = input.suapEnrollment?.trim();
     const groupId = input.groupId?.trim();
     const start = parseClock(input.startTime);
@@ -59,7 +147,9 @@ export class WorkloadAdjustmentsService {
     const group = await this.prismaService.groups.findUnique({
       where: { id: groupId },
     });
-    if (!group?.status) throw new NotFoundException('Grupo não encontrado');
+    if (!group || (!group.status && group.id !== options?.currentGroupId)) {
+      throw new NotFoundException('Grupo não encontrado');
+    }
 
     const membership = await this.prismaService.users_groups.findFirst({
       where: { user_id: user.id, group_id: group.id },
@@ -70,6 +160,7 @@ export class WorkloadAdjustmentsService {
 
     const overlap = await this.prismaService.workload_adjustments.findFirst({
       where: {
+        ...(options?.excludeId ? { id: { not: options.excludeId } } : {}),
         user_id: user.id,
         group_id: group.id,
         AND: [
@@ -82,54 +173,23 @@ export class WorkloadAdjustmentsService {
       throw new ConflictException('Já existe ajuste nesse período');
     }
 
-    const adjustment = await this.prismaService.workload_adjustments.create({
-      data: {
-        id: randomUUID(),
-        user_id: user.id,
-        daily_workload_minutes: dailyWorkloadMinutes,
-        start_time: start.text,
-        end_time: end.text,
-        group_id: group.id,
-        start_date: startDate,
-        end_date: endDate,
-        created_at: new Date(),
-      },
-      include: {
-        users: { select: { suap_enrollment: true } },
-        groups: { select: { id: true, name: true } },
-      },
-    });
-
-    return toAdjustment(adjustment);
-  }
-
-  async list(suapEnrollment?: string) {
-    const enrollment = suapEnrollment?.trim();
-    const adjustments = await this.prismaService.workload_adjustments.findMany({
-      where: enrollment
-        ? { users: { suap_enrollment: enrollment } }
-        : undefined,
-      include: {
-        users: { select: { suap_enrollment: true } },
-        groups: { select: { id: true, name: true } },
-      },
-      orderBy: { start_date: 'desc' },
-    });
-
-    return adjustments.map(toAdjustment);
-  }
-
-  findCoveringAll(userId: string, day: Date) {
-    return this.prismaService.workload_adjustments.findMany({
-      where: {
-        user_id: userId,
-        start_date: { lte: day },
-        OR: [{ end_date: null }, { end_date: { gte: day } }],
-      },
-      orderBy: { start_date: 'desc' },
-    });
+    return { user, group, dailyWorkloadMinutes, start, end, startDate, endDate };
   }
 }
+
+const adjustmentInclude = {
+  users: { select: { suap_enrollment: true } },
+  groups: { select: { id: true, name: true } },
+} as const;
+
+type AdjustmentInput = {
+  suapEnrollment?: string;
+  groupId?: string;
+  startTime?: string;
+  endTime?: string;
+  startDate?: string;
+  endDate?: string;
+};
 
 function toAdjustment(adjustment: {
   id: string;
