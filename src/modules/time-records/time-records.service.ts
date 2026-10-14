@@ -216,16 +216,25 @@ export class TimeRecordsService {
         user_id: userId,
         recorded_at: { gte: day.start, lt: day.end },
       },
+      include: {
+        groups: {
+          select: {
+            id: true,
+            name: true,
+            start_time: true,
+            end_time: true,
+            daily_workload_minutes: true,
+          },
+        },
+      },
       orderBy: { recorded_at: 'asc' },
     });
-    const workedMinutes = workedMinutesFrom(records, day.end);
-    const expectedMinutes = await this.expectedMinutes(userId, day.utcDay);
+    const groups = await this.dayGroups(userId, day.utcDay, records, day.end);
+    const totals = totalsOf(groups);
     return {
       date: day.date,
-      workedMinutes,
-      expectedMinutes,
-      remainingMinutes:
-        expectedMinutes === null ? null : expectedMinutes - workedMinutes,
+      ...totals,
+      groups,
       activities: records
         .filter((record) => record.type === 'saida')
         .map((record) => ({
@@ -234,24 +243,53 @@ export class TimeRecordsService {
         })),
     };
   }
-  private async expectedMinutes(userId: string, day: Date) {
-    const groups = await this.groupsService.findActive(userId);
+
+  private async dayGroups(
+    userId: string,
+    day: Date,
+    records: PunchRecord[],
+    end: Date,
+  ) {
+    const memberships = await this.groupsService.findActive(userId);
     const adjustments = await this.workloadAdjustmentsService.findCoveringAll(
       userId,
       day,
     );
-    const legacy = adjustments.find((item) => !item.group_id);
-    if (groups.length === 0) return legacy?.daily_workload_minutes ?? null;
+    const worked = workedByGroup(records, end);
+    const lines = new Map<string, GroupHours>();
 
-    const specific = adjustments.filter((item) => item.group_id);
-    if (groups.length === 1 && legacy && specific.length === 0) {
-      return legacy.daily_workload_minutes;
+    for (const plan of plansFrom(memberships, adjustments)) {
+      lines.set(plan.key, {
+        ...plan.hours,
+        workedMinutes: worked.get(plan.key) ?? 0,
+        scheduleVaries: false,
+      });
     }
 
-    return groups.reduce((total, group) => {
-      const adjustment = specific.find((item) => item.group_id === group.id);
-      return total + (adjustment?.daily_workload_minutes ?? group.daily_workload_minutes);
-    }, 0);
+    for (const [key, minutes] of worked) {
+      if (lines.has(key)) continue;
+      const sample = records.find((record) => groupKey(record.group_id) === key)?.groups;
+      const adjustment = adjustments.find((item) => groupKey(item.group_id) === key);
+      const expectedMinutes =
+        adjustment?.daily_workload_minutes ?? sample?.daily_workload_minutes ?? null;
+      lines.set(key, {
+        id: key ? key : null,
+        name: sample?.name ?? (key ? 'Grupo' : 'Sem grupo'),
+        startTime: adjustment?.start_time ?? sample?.start_time ?? null,
+        endTime: adjustment?.end_time ?? sample?.end_time ?? null,
+        workedMinutes: minutes,
+        expectedMinutes,
+        scheduleVaries: false,
+      });
+    }
+
+    return [...lines.values()]
+      .map((line) => ({
+        ...line,
+        remainingMinutes:
+          line.expectedMinutes === null ? null : line.expectedMinutes - line.workedMinutes,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, 'pt-BR'));
   }
 
   async summaryByEnrollment(suapEnrollment?: string, date?: string) {
@@ -291,21 +329,14 @@ export class TimeRecordsService {
       days.push(await this.summary(userId, date));
     }
 
-    const workedMinutes = days.reduce(
-      (total, day) => total + day.workedMinutes,
-      0,
-    );
-    const expectedMinutes = days.every((day) => day.expectedMinutes !== null)
-      ? days.reduce((total, day) => total + (day.expectedMinutes ?? 0), 0)
-      : null;
+    const groups = aggregateGroups(days);
+    const totals = totalsOf(groups);
 
     return {
       from: start.date,
       to: end.date,
-      workedMinutes,
-      expectedMinutes,
-      remainingMinutes:
-        expectedMinutes === null ? null : expectedMinutes - workedMinutes,
+      ...totals,
+      groups,
       days,
     };
   }
@@ -372,31 +403,176 @@ function toRecord(
   };
 }
 
-function workedMinutesFrom(
-  records: { type: string; recorded_at: Date }[],
-  end: Date,
+type GroupHours = {
+  id: string | null;
+  name: string;
+  startTime: string | null;
+  endTime: string | null;
+  workedMinutes: number;
+  expectedMinutes: number | null;
+  remainingMinutes?: number | null;
+  scheduleVaries: boolean;
+};
+
+type PunchRecord = {
+  type: string;
+  recorded_at: Date;
+  group_id: string | null;
+  groups: {
+    id: string;
+    name: string;
+    start_time: string | null;
+    end_time: string | null;
+    daily_workload_minutes: number;
+  } | null;
+};
+
+function groupKey(groupId: string | null | undefined) {
+  return groupId ?? '';
+}
+
+function plansFrom(
+  groups: {
+    id: string;
+    name: string;
+    start_time: string | null;
+    end_time: string | null;
+    daily_workload_minutes: number;
+  }[],
+  adjustments: {
+    group_id: string | null;
+    start_time: string | null;
+    end_time: string | null;
+    daily_workload_minutes: number;
+  }[],
 ) {
-  let open: Date | null = null;
-  let minutes = 0;
+  const legacy = adjustments.find((item) => !item.group_id);
+  const specific = adjustments.filter((item) => item.group_id);
+
+  if (groups.length === 0) {
+    if (!legacy) return [];
+    return [
+      {
+        key: '',
+        hours: {
+          id: null,
+          name: 'Ajuste individual',
+          startTime: legacy.start_time,
+          endTime: legacy.end_time,
+          expectedMinutes: legacy.daily_workload_minutes,
+        },
+      },
+    ];
+  }
+
+  return groups.map((group) => {
+    const adjustment = specific.find((item) => item.group_id === group.id);
+    const useLegacy = groups.length === 1 && legacy && specific.length === 0;
+    const source = useLegacy ? legacy : adjustment;
+    return {
+      key: group.id,
+      hours: {
+        id: group.id,
+        name: group.name,
+        startTime: source?.start_time ?? group.start_time,
+        endTime: source?.end_time ?? group.end_time,
+        expectedMinutes: source?.daily_workload_minutes ?? group.daily_workload_minutes,
+      },
+    };
+  });
+}
+
+function workedByGroup(records: PunchRecord[], end: Date) {
+  const totals = new Map<string, number>();
+  let open: { at: Date; key: string } | null = null;
+  const add = (key: string, start: Date, finish: Date) => {
+    totals.set(key, (totals.get(key) ?? 0) + minutesBetween(start, finish));
+  };
 
   for (const record of records) {
     if (record.type === 'entrada') {
-      open = record.recorded_at;
+      open = { at: record.recorded_at, key: groupKey(record.group_id) };
       continue;
     }
-
     if (record.type === 'saida' && open) {
-      minutes += minutesBetween(open, record.recorded_at);
+      add(open.key, open.at, record.recorded_at);
       open = null;
     }
   }
 
   if (open) {
     const limit = new Date() < end ? new Date() : end;
-    minutes += minutesBetween(open, limit);
+    add(open.key, open.at, limit);
   }
 
-  return minutes;
+  return totals;
+}
+
+function totalsOf(groups: { workedMinutes: number; expectedMinutes: number | null }[]) {
+  const known = groups
+    .map((group) => group.expectedMinutes)
+    .filter((value): value is number => value !== null);
+  const workedMinutes = groups.reduce((total, group) => total + group.workedMinutes, 0);
+  const expectedMinutes =
+    known.length === 0 ? null : known.reduce((total, value) => total + value, 0);
+  return {
+    workedMinutes,
+    expectedMinutes,
+    remainingMinutes:
+      expectedMinutes === null ? null : expectedMinutes - workedMinutes,
+  };
+}
+
+function aggregateGroups(
+  days: { groups: (GroupHours & { remainingMinutes: number | null })[] }[],
+) {
+  const order: string[] = [];
+  const merged = new Map<
+    string,
+    GroupHours & { scheduleKey: string }
+  >();
+
+  for (const day of days) {
+    for (const group of day.groups) {
+      const key = group.id ?? `legacy:${group.name}`;
+      const scheduleKey = `${group.startTime ?? ''}|${group.endTime ?? ''}`;
+      const current = merged.get(key);
+      if (!current) {
+        order.push(key);
+        merged.set(key, { ...group, scheduleKey, scheduleVaries: false });
+        continue;
+      }
+      current.workedMinutes += group.workedMinutes;
+      if (current.expectedMinutes === null && group.expectedMinutes === null) {
+        current.expectedMinutes = null;
+      } else {
+        current.expectedMinutes =
+          (current.expectedMinutes ?? 0) + (group.expectedMinutes ?? 0);
+      }
+      if (current.scheduleKey !== scheduleKey) {
+        current.scheduleVaries = true;
+        current.startTime = null;
+        current.endTime = null;
+      }
+    }
+  }
+
+  return order.map((key) => {
+    const group = merged.get(key)!;
+    return {
+      id: group.id,
+      name: group.name,
+      startTime: group.startTime,
+      endTime: group.endTime,
+      workedMinutes: group.workedMinutes,
+      expectedMinutes: group.expectedMinutes,
+      remainingMinutes:
+        group.expectedMinutes === null
+          ? null
+          : group.expectedMinutes - group.workedMinutes,
+      scheduleVaries: group.scheduleVaries,
+    };
+  });
 }
 
 function minutesBetween(start: Date, end: Date) {
