@@ -1,10 +1,11 @@
 import {
+  ConflictException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { clockContains, fortalezaClock } from '../../common/clock.js';
+import { clockContains, fortalezaClock, parseClock } from '../../common/clock.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 import { QrCodesService } from '../qr-codes/qr-codes.service.js';
 import { RECORD_TYPES } from './constants/record-types.constants.js';
@@ -24,56 +25,79 @@ export class TimeRecordsService {
 
   async create(userId: string, input: { code?: string; type?: string; groupId?: string }) {
     const code = input.code?.trim();
-    if (!code || !input.type || !isRecordType(input.type)) {
+    const type = input.type;
+    if (!code || !type || !isRecordType(type)) {
       throw new UnprocessableEntityException('Código e tipo são obrigatórios');
     }
 
     const qrCode = await this.qrCodesService.findActiveById(code);
 
-    const last = await this.prismaService.time_records.findFirst({
-      where: { user_id: userId },
-      orderBy: { recorded_at: 'desc' },
-    });
+    const history = await this.recentRecords(userId);
+    const last = history.find((record) => !isRefusedExit(record)) ?? null;
 
-    if ((!last && input.type !== 'entrada') || last?.type === input.type) {
+    if ((!last && type !== 'entrada') || last?.type === type) {
       throw new UnprocessableEntityException('Sequência de batida inválida');
     }
 
-    const groupId =
-      input.type === 'saida'
-        ? (last?.group_id ?? null)
-        : await this.resolveEntryGroup(userId, input.groupId);
-
     const now = new Date();
-    const record = await this.prismaService.time_records.create({
-      data: {
-        id: randomUUID(),
-        user_id: userId,
-        qr_code_id: qrCode.id,
-        group_id: groupId,
-        type: input.type,
-        recorded_at: now,
-        created_at: now,
-      },
+    const clock = fortalezaClock(now);
+    if (type === 'saida' && isRefusedExit(history[0])) {
+      const end = history[0]?.early_exit_justifications?.scheduled_end;
+      if (end && clock < end) {
+        throw new UnprocessableEntityException(`O expediente segue até ${end}`);
+      }
+    }
+
+    const groupId =
+      type === 'saida' ? (last?.group_id ?? null) : await this.resolveEntryGroup(userId, input.groupId);
+
+    const scheduledEnd = type === 'saida' ? await this.scheduledEndFor(userId, groupId, now) : null;
+    const early = Boolean(scheduledEnd && clock < scheduledEnd);
+
+    const created = await this.prismaService.$transaction(async (tx) => {
+      const record = await tx.time_records.create({
+        data: {
+          id: randomUUID(),
+          user_id: userId,
+          qr_code_id: qrCode.id,
+          group_id: groupId,
+          type,
+          recorded_at: now,
+          created_at: now,
+        },
+      });
+      const justification =
+        early && scheduledEnd
+          ? await tx.early_exit_justifications.create({
+              data: {
+                id: randomUUID(),
+                time_record_id: record.id,
+                user_id: userId,
+                scheduled_end: scheduledEnd,
+                created_at: now,
+                updated_at: now,
+              },
+            })
+          : null;
+      return { record, justification };
     });
 
     const entry =
-      input.type === 'saida' ? await this.previousEntry(userId, record.recorded_at) : null;
+      type === 'saida'
+        ? await this.previousEntry(userId, created.record.recorded_at)
+        : null;
     const group = groupId
       ? await this.prismaService.groups.findUnique({
           where: { id: groupId },
           select: { id: true, name: true },
         })
       : null;
-    return toRecord(record, qrCode, entry, group);
+    return toRecord(created.record, qrCode, entry, group, created.justification);
   }
 
   async groupOptions(userId: string) {
-    const last = await this.prismaService.time_records.findFirst({
-      where: { user_id: userId },
-      orderBy: { recorded_at: 'desc' },
-      include: { groups: { select: { id: true, name: true, start_time: true, end_time: true } } },
-    });
+    const history = await this.recentRecords(userId);
+    const last = history.find((record) => !isRefusedExit(record)) ?? null;
 
     if (last?.type === 'entrada') {
       const open = last.groups;
@@ -185,28 +209,162 @@ export class TimeRecordsService {
     return toRecord(updated, updated.qr_codes, entry, updated.groups);
   }
 
+  async saveReason(userId: string, input: { exitId?: string; reason?: string }) {
+    const exitId = input.exitId?.trim();
+    const reason = input.reason?.trim();
+    if (!exitId || !reason) {
+      throw new UnprocessableEntityException('Saída e motivo são obrigatórios');
+    }
+    if (reason.length > 500) {
+      throw new UnprocessableEntityException('O motivo pode ter no máximo 500 caracteres');
+    }
+
+    const item = await this.prismaService.early_exit_justifications.findFirst({
+      where: { time_record_id: exitId, user_id: userId },
+    });
+    if (!item) {
+      throw new UnprocessableEntityException('Esta saída não precisa de justificativa');
+    }
+    if (item.status !== 'PENDENTE') {
+      throw new UnprocessableEntityException('A justificativa já foi analisada');
+    }
+
+    const updated = await this.prismaService.early_exit_justifications.update({
+      where: { id: item.id },
+      data: { reason, updated_at: new Date() },
+    });
+    return {
+      id: updated.id,
+      exitId: updated.time_record_id,
+      scheduledEnd: updated.scheduled_end,
+      reason: updated.reason,
+      status: updated.status,
+    };
+  }
+
+  async listJustifications() {
+    const rows = await this.prismaService.early_exit_justifications.findMany({
+      include: justificationInclude,
+      orderBy: { created_at: 'desc' },
+    });
+
+    return rows.map(toJustification);
+  }
+
+  async review(
+    reviewerId: string,
+    input: { id?: string; status?: string; makeupDate?: string; makeupStart?: string },
+  ) {
+    const id = input.id?.trim();
+    if (!id || !isReviewStatus(input.status)) {
+      throw new UnprocessableEntityException('Justificativa e decisão são obrigatórias');
+    }
+
+    const item = await this.prismaService.early_exit_justifications.findUnique({
+      where: { id },
+      include: { time_records: { select: { recorded_at: true } } },
+    });
+    if (!item) throw new NotFoundException('Justificativa não encontrada');
+    if (item.user_id === reviewerId) {
+      throw new ConflictException('Não é possível analisar a própria justificativa');
+    }
+    if (!item.reason?.trim()) {
+      throw new UnprocessableEntityException('O motivo ainda não foi informado');
+    }
+    if (item.status !== 'PENDENTE') {
+      throw new UnprocessableEntityException('A justificativa já foi analisada');
+    }
+
+    const makeup =
+      input.status === 'APROVADA_PARCIAL' ? makeupWindow(item, input.makeupDate, input.makeupStart) : null;
+    if (input.status === 'RECUSADA') assertCanRefuse(item);
+
+    const now = new Date();
+    const updated = await this.prismaService.early_exit_justifications.update({
+      where: { id: item.id },
+      data: {
+        status: input.status,
+        reviewer_id: reviewerId,
+        reviewed_at: now,
+        updated_at: now,
+        makeup_date: makeup?.date ?? null,
+        makeup_start: makeup?.start ?? null,
+        makeup_end: makeup?.end ?? null,
+      },
+      include: justificationInclude,
+    });
+
+    return toJustification(updated);
+  }
+
   async listMine(userId: string) {
     const records = await this.prismaService.time_records.findMany({
       where: { user_id: userId },
-      include: { qr_codes: true, groups: { select: { id: true, name: true } } },
+      include: {
+        qr_codes: true,
+        groups: { select: { id: true, name: true } },
+        early_exit_justifications: true,
+      },
       orderBy: { recorded_at: 'desc' },
     });
 
     return records.map((record, index) => {
-      const previous = records[index + 1];
-      const entry =
-        record.type === 'saida' && previous?.type === 'entrada' ? previous : null;
-      return toRecord(record, record.qr_codes, entry, record.groups);
+      const entry = entryBefore(records, index);
+      return toRecord(
+        record,
+        record.qr_codes,
+        entry,
+        record.groups,
+        record.early_exit_justifications,
+      );
+    });
+  }
+
+  private async scheduledEndFor(userId: string, groupId: string | null, at: Date) {
+    if (!groupId) return null;
+    const group = await this.prismaService.groups.findUnique({
+      where: { id: groupId },
+    });
+    if (!group) return null;
+
+    const day = resolveDay(fortalezaDate(at));
+    const memberships = await this.groupsService.findActive(userId);
+    const listed = memberships.some((item) => item.id === group.id)
+      ? memberships
+      : [...memberships, group];
+    const adjustments = await this.workloadAdjustmentsService.findCoveringAll(
+      userId,
+      day.utcDay,
+    );
+    const plan = plansFrom(listed, adjustments).find((item) => item.key === group.id);
+    return plan?.hours.endTime ?? group.end_time;
+  }
+
+  private async recentRecords(userId: string) {
+    return this.prismaService.time_records.findMany({
+      where: { user_id: userId },
+      orderBy: { recorded_at: 'desc' },
+      include: {
+        groups: { select: { id: true, name: true, start_time: true, end_time: true } },
+        early_exit_justifications: { select: { status: true, scheduled_end: true } },
+      },
+      take: 30,
     });
   }
 
   private async previousEntry(userId: string, recordedAt: Date) {
-    const previous = await this.prismaService.time_records.findFirst({
+    const previous = await this.prismaService.time_records.findMany({
       where: { user_id: userId, recorded_at: { lt: recordedAt } },
       orderBy: { recorded_at: 'desc' },
+      include: { early_exit_justifications: { select: { status: true } } },
+      take: 30,
     });
-    if (previous?.type !== 'entrada') return null;
-    return previous;
+    for (const record of previous) {
+      if (isRefusedExit(record)) continue;
+      if (record.type !== 'entrada') return null;
+      return record;
+    }
+    return null;
   }
 
   async summary(userId: string, date?: string) {
@@ -226,10 +384,14 @@ export class TimeRecordsService {
             daily_workload_minutes: true,
           },
         },
+        early_exit_justifications: true,
       },
       orderBy: { recorded_at: 'asc' },
     });
-    const groups = await this.dayGroups(userId, day.utcDay, records, day.end);
+    const groups = creditApproved(
+      await this.dayGroups(userId, day.utcDay, records, day.end),
+      records,
+    );
     const totals = totalsOf(groups);
     return {
       date: day.date,
@@ -241,6 +403,21 @@ export class TimeRecordsService {
           recordedAt: record.recorded_at,
           description: record.activity,
         })),
+      justifications: records.flatMap((record) => {
+        const item = record.early_exit_justifications;
+        if (!item) return [];
+        return [
+          {
+            recordedAt: record.recorded_at,
+            scheduledEnd: item.scheduled_end,
+            reason: item.reason,
+            status: item.status,
+            makeupDate: dateOnly(item.makeup_date),
+            makeupStart: item.makeup_start,
+            makeupEnd: item.makeup_end,
+          },
+        ];
+      }),
     };
   }
 
@@ -376,6 +553,133 @@ function isRecordType(value: string): value is TimeRecordType {
   return (RECORD_TYPES as readonly string[]).includes(value);
 }
 
+type ReviewStatus = 'APROVADA' | 'APROVADA_PARCIAL' | 'RECUSADA';
+
+function isReviewStatus(value?: string): value is ReviewStatus {
+  return value === 'APROVADA' || value === 'APROVADA_PARCIAL' || value === 'RECUSADA';
+}
+
+function isRefusedExit(record?: { type: string; early_exit_justifications?: { status: string } | null } | null) {
+  return record?.type === 'saida' && record.early_exit_justifications?.status === 'RECUSADA';
+}
+
+const justificationInclude = {
+  users: { select: { id: true, suap_enrollment: true, name: true } },
+  reviewer: { select: { name: true } },
+  time_records: {
+    select: {
+      recorded_at: true,
+      groups: { select: { name: true } },
+    },
+  },
+} as const;
+
+function toJustification(row: {
+  id: string;
+  scheduled_end: string;
+  reason: string | null;
+  status: 'PENDENTE' | 'APROVADA' | 'APROVADA_PARCIAL' | 'RECUSADA';
+  makeup_date: Date | null;
+  makeup_start: string | null;
+  makeup_end: string | null;
+  reviewed_at: Date | null;
+  users: { id: string; suap_enrollment: string; name: string | null };
+  reviewer: { name: string | null } | null;
+  time_records: { recorded_at: Date; groups: { name: string } | null };
+}) {
+  return {
+    id: row.id,
+    userId: row.users.id,
+    suapEnrollment: row.users.suap_enrollment,
+    name: row.users.name,
+    groupName: row.time_records.groups?.name ?? null,
+    recordedAt: row.time_records.recorded_at,
+    scheduledEnd: row.scheduled_end,
+    reason: row.reason,
+    status: row.status,
+    makeupDate: dateOnly(row.makeup_date),
+    makeupStart: row.makeup_start,
+    makeupEnd: row.makeup_end,
+    reviewerName: row.reviewer?.name ?? null,
+    reviewedAt: row.reviewed_at,
+  };
+}
+
+function makeupWindow(
+  item: { scheduled_end: string; time_records: { recorded_at: Date } },
+  makeupDate?: string,
+  makeupStart?: string,
+) {
+  const date = makeupDate?.trim();
+  const start = parseClock(makeupStart?.trim().slice(0, 5));
+  const punchDay = fortalezaDate(item.time_records.recorded_at);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !start) {
+    throw new UnprocessableEntityException('Data e horário do acerto são obrigatórios');
+  }
+  if (date <= punchDay) {
+    throw new UnprocessableEntityException('A data do acerto precisa ser posterior à saída');
+  }
+
+  const exitClock = fortalezaClock(item.time_records.recorded_at);
+  const gap = clockMinutes(item.scheduled_end) - clockMinutes(exitClock);
+  if (gap <= 0) {
+    throw new UnprocessableEntityException('Não há horas restantes para acertar');
+  }
+  const end = start.hours * 60 + start.minutes + gap;
+  if (end >= 24 * 60) {
+    throw new UnprocessableEntityException('O horário de início precisa deixar o acerto no mesmo dia');
+  }
+
+  return {
+    date: parseUtcDate(date),
+    start: start.text,
+    end: minutesToClock(end),
+  };
+}
+
+function assertCanRefuse(item: { scheduled_end: string; time_records: { recorded_at: Date } }) {
+  const punchDay = fortalezaDate(item.time_records.recorded_at);
+  const today = fortalezaDate(new Date());
+  if (punchDay !== today || fortalezaClock() >= item.scheduled_end) {
+    throw new UnprocessableEntityException(
+      'Depois do fim do expediente, escolha aprovação ou aprovação parcial',
+    );
+  }
+}
+
+function clockMinutes(value: string) {
+  const [hours, minutes] = value.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+function minutesToClock(total: number) {
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function parseUtcDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function dateOnly(value: Date | null) {
+  return value ? value.toISOString().slice(0, 10) : null;
+}
+
+function entryBefore<T extends { type: string; early_exit_justifications?: { status: string } | null }>(
+  records: T[],
+  index: number,
+) {
+  if (records[index]?.type !== 'saida') return null;
+  for (let cursor = index + 1; cursor < records.length; cursor += 1) {
+    const candidate = records[cursor];
+    if (isRefusedExit(candidate)) continue;
+    return candidate?.type === 'entrada' ? candidate : null;
+  }
+  return null;
+}
+
 function toRecord(
   record: {
     id: string;
@@ -387,6 +691,14 @@ function toRecord(
   qrCode: { id: string; location: string },
   entry?: { id: string; recorded_at: Date } | null,
   group?: { id: string; name: string } | null,
+  justification?: {
+    scheduled_end: string;
+    reason: string | null;
+    status: 'PENDENTE' | 'APROVADA' | 'APROVADA_PARCIAL' | 'RECUSADA';
+    makeup_date?: Date | null;
+    makeup_start?: string | null;
+    makeup_end?: string | null;
+  } | null,
 ) {
   return {
     id: record.id,
@@ -400,6 +712,16 @@ function toRecord(
       id: qrCode.id,
       location: qrCode.location,
     },
+    earlyExit: justification
+      ? {
+          scheduledEnd: justification.scheduled_end,
+          reason: justification.reason,
+          status: justification.status,
+          makeupDate: dateOnly(justification.makeup_date ?? null),
+          makeupStart: justification.makeup_start ?? null,
+          makeupEnd: justification.makeup_end ?? null,
+        }
+      : null,
   };
 }
 
@@ -425,6 +747,7 @@ type PunchRecord = {
     end_time: string | null;
     daily_workload_minutes: number;
   } | null;
+  early_exit_justifications?: { status: string } | null;
 };
 
 function groupKey(groupId: string | null | undefined) {
@@ -490,6 +813,7 @@ function workedByGroup(records: PunchRecord[], end: Date) {
   };
 
   for (const record of records) {
+    if (isRefusedExit(record)) continue;
     if (record.type === 'entrada') {
       open = { at: record.recorded_at, key: groupKey(record.group_id) };
       continue;
@@ -506,6 +830,29 @@ function workedByGroup(records: PunchRecord[], end: Date) {
   }
 
   return totals;
+}
+
+function creditApproved(
+  groups: (GroupHours & { remainingMinutes: number | null })[],
+  records: PunchRecord[],
+) {
+  const approved = new Set(
+    records
+      .filter(
+        (record) =>
+          record.type === 'saida' && record.early_exit_justifications?.status === 'APROVADA',
+      )
+      .map((record) => groupKey(record.group_id)),
+  );
+  return groups.map((line) => {
+    if (!approved.has(groupKey(line.id)) || line.expectedMinutes === null) return line;
+    const workedMinutes = Math.max(line.workedMinutes, line.expectedMinutes);
+    return {
+      ...line,
+      workedMinutes,
+      remainingMinutes: line.expectedMinutes - workedMinutes,
+    };
+  });
 }
 
 function totalsOf(groups: { workedMinutes: number; expectedMinutes: number | null }[]) {
@@ -622,10 +969,14 @@ function eachDay(from: string, to: string) {
 }
 
 function brazilToday() {
+  return fortalezaDate(new Date());
+}
+
+function fortalezaDate(date: Date) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Fortaleza',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(new Date());
+  }).format(date);
 }

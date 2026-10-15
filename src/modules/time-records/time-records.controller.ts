@@ -32,6 +32,30 @@ export class TimeRecordsController {
     return this.timeRecordsService.saveActivity(user.id, body);
   }
 
+  @Roles('ALUNO', 'PRESTADOR', 'SERVIDOR')
+  @Post('justification')
+  saveReason(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: { exitId?: string; reason?: string },
+  ) {
+    return this.timeRecordsService.saveReason(user.id, body);
+  }
+
+  @Roles('SERVIDOR')
+  @Get('justifications')
+  listJustifications() {
+    return this.timeRecordsService.listJustifications();
+  }
+
+  @Roles('SERVIDOR')
+  @Post('justifications/review')
+  review(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: { id?: string; status?: string; makeupDate?: string; makeupStart?: string },
+  ) {
+    return this.timeRecordsService.review(user.id, body);
+  }
+
   @Get('list-mine')
   listMine(@CurrentUser() user: AuthenticatedUser) {
     return this.timeRecordsService.listMine(user.id);

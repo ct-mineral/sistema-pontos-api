@@ -14,6 +14,13 @@ enum UserRole {
   SERVIDOR
 }
 
+enum JustificationStatus {
+  PENDENTE
+  APROVADA
+  APROVADA_PARCIAL
+  RECUSADA
+}
+
 model users {
   id              String   @id @db.Uuid
   suap_enrollment String   @unique @db.VarChar(30)
@@ -24,9 +31,11 @@ model users {
   created_at      DateTime @db.Timestamp(6)
   updated_at      DateTime @db.Timestamp(6)
 
-  users_groups         users_groups[]
-  time_records         time_records[]
-  workload_adjustments workload_adjustments[]
+  users_groups              users_groups[]
+  time_records              time_records[]
+  workload_adjustments      workload_adjustments[]
+  early_exit_justifications early_exit_justifications[] @relation("justification_owner")
+  reviewed_justifications   early_exit_justifications[] @relation("justification_reviewer")
 }
 
 model groups {
@@ -75,9 +84,30 @@ model time_records {
   group_id    String?  @db.Uuid
   created_at  DateTime @db.Timestamp(6)
 
-  users    users    @relation(fields: [user_id], references: [id])
-  qr_codes qr_codes @relation(fields: [qr_code_id], references: [id])
-  groups   groups?  @relation(fields: [group_id], references: [id])
+  users                     users                      @relation(fields: [user_id], references: [id])
+  qr_codes                  qr_codes                   @relation(fields: [qr_code_id], references: [id])
+  groups                    groups?                    @relation(fields: [group_id], references: [id])
+  early_exit_justifications early_exit_justifications?
+}
+
+model early_exit_justifications {
+  id             String               @id @db.Uuid
+  time_record_id String               @unique @db.Uuid
+  user_id        String               @db.Uuid
+  reason         String?              @db.VarChar(500)
+  scheduled_end  String               @db.VarChar(5)
+  status         JustificationStatus  @default(PENDENTE)
+  makeup_date    DateTime?            @db.Date
+  makeup_start   String?              @db.VarChar(5)
+  makeup_end     String?              @db.VarChar(5)
+  reviewer_id    String?              @db.Uuid
+  reviewed_at    DateTime?            @db.Timestamp(6)
+  created_at     DateTime             @db.Timestamp(6)
+  updated_at     DateTime             @db.Timestamp(6)
+
+  time_records time_records @relation(fields: [time_record_id], references: [id])
+  users        users        @relation("justification_owner", fields: [user_id], references: [id])
+  reviewer     users?       @relation("justification_reviewer", fields: [reviewer_id], references: [id])
 }
 
 model workload_adjustments {
