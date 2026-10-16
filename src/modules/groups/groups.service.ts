@@ -151,6 +151,8 @@ export class GroupsService {
       throw new ConflictException('Usuário já está nesse grupo');
     }
 
+    await this.assertShiftAvailable(user.id, group);
+
     const link = await this.prismaService.users_groups.create({
       data: {
         id: randomUUID(),
@@ -235,6 +237,8 @@ export class GroupsService {
       throw new ConflictException('Usuário já está nesse grupo');
     }
 
+    await this.assertShiftAvailable(user.id, group, membership.id);
+
     const link = await this.prismaService.users_groups.update({
       where: { id: membership.id },
       data: { group_id: group.id },
@@ -246,6 +250,35 @@ export class GroupsService {
       groupId: link.group_id,
       createdAt: link.created_at,
     };
+  }
+
+  private async assertShiftAvailable(
+    userId: string,
+    group: { start_time: string | null },
+    ignoreMembershipId?: string,
+  ) {
+    const shift = shiftOf(group.start_time);
+    if (!shift) {
+      throw new UnprocessableEntityException(
+        'O grupo precisa ter um horário de entrada',
+      );
+    }
+
+    const memberships = await this.prismaService.users_groups.findMany({
+      where: {
+        user_id: userId,
+        groups: { status: true },
+        ...(ignoreMembershipId ? { id: { not: ignoreMembershipId } } : {}),
+      },
+      include: { groups: { select: { start_time: true } } },
+    });
+
+    const taken = memberships.some(
+      (membership) => shiftOf(membership.groups.start_time) === shift,
+    );
+    if (taken) {
+      throw new ConflictException('Usuário já está em um grupo neste turno');
+    }
   }
 }
 
@@ -271,6 +304,17 @@ function readSchedule(input: {
   }
 
   return { name, start, end, dailyWorkloadMinutes };
+}
+
+type Shift = 'manha' | 'tarde' | 'noite';
+
+function shiftOf(startTime: string | null): Shift | null {
+  const start = parseClock(startTime ?? undefined);
+  if (!start) return null;
+  const minutes = start.hours * 60 + start.minutes;
+  if (minutes < 12 * 60) return 'manha';
+  if (minutes < 18 * 60) return 'tarde';
+  return 'noite';
 }
 
 type GroupPerson = {
