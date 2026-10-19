@@ -120,6 +120,9 @@ export class UsersService {
       this.prismaService.workload_adjustments.deleteMany({
         where: { user_id: current.id },
       }),
+      this.prismaService.time_allowances.deleteMany({
+        where: { user_id: current.id },
+      }),
       this.prismaService.users.delete({ where: { id: current.id } }),
     ]);
 

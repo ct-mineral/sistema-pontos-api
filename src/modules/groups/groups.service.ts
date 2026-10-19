@@ -100,6 +100,9 @@ export class GroupsService {
     }
 
     await this.prismaService.$transaction([
+      this.prismaService.time_allowances.deleteMany({
+        where: { group_id: current.id },
+      }),
       this.prismaService.users_groups.deleteMany({
         where: { group_id: current.id },
       }),

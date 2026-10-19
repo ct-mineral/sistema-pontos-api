@@ -5,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import type { Express } from 'express';
 import { clockContains, fortalezaClock, parseClock } from '../../common/clock.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 import { QrCodesService } from '../qr-codes/qr-codes.service.js';
@@ -388,9 +389,17 @@ export class TimeRecordsService {
       },
       orderBy: { recorded_at: 'asc' },
     });
-    const groups = creditApproved(
-      await this.dayGroups(userId, day.utcDay, records, day.end),
-      records,
+    const allowances = await this.prismaService.time_allowances.findMany({
+      where: { user_id: userId, day: day.utcDay },
+      include: {
+        groups: { select: { name: true } },
+        allowance_documents: { select: { id: true, file_name: true } },
+      },
+      orderBy: { created_at: 'asc' },
+    });
+    const groups = creditAllowances(
+      creditApproved(await this.dayGroups(userId, day.utcDay, records, day.end), records),
+      allowances,
     );
     const totals = totalsOf(groups);
     return {
@@ -418,6 +427,18 @@ export class TimeRecordsService {
           },
         ];
       }),
+      allowances: allowances.map((item) => ({
+        id: item.id,
+        groupId: item.group_id,
+        groupName: item.groups.name,
+        minutes: item.minutes,
+        reason: item.reason,
+        status: item.status,
+        documents: item.allowance_documents.map((document) => ({
+          id: document.id,
+          fileName: document.file_name,
+        })),
+      })),
     };
   }
 
@@ -534,6 +555,151 @@ export class TimeRecordsService {
     if (!user) throw new NotFoundException('Usuário não encontrado');
 
     return this.period(user.id, from, to);
+  }
+
+  async allowanceGroups(userId: string) {
+    const groups = await this.groupsService.findActive(userId);
+    return groups.map((group) => ({ id: group.id, name: group.name }));
+  }
+
+  async requestAllowance(
+    userId: string,
+    input: { date?: string; groupId?: string; reason?: string },
+    files: Express.Multer.File[] = [],
+  ) {
+    const groupId = input.groupId?.trim();
+    const reason = input.reason?.trim();
+    const day = resolveDay(input.date);
+    if (!groupId || !reason) {
+      throw new UnprocessableEntityException('Grupo, dia e motivo são obrigatórios');
+    }
+    if (reason.length > 500) {
+      throw new UnprocessableEntityException('O motivo pode ter no máximo 500 caracteres');
+    }
+    if (day.date > fortalezaDate(new Date())) {
+      throw new UnprocessableEntityException('O abono não pode ser pedido para um dia futuro');
+    }
+
+    const membership = await this.prismaService.users_groups.findFirst({
+      where: { user_id: userId, group_id: groupId, groups: { status: true } },
+    });
+    if (!membership) throw new UnprocessableEntityException('Grupo inválido');
+
+    const pending = await this.prismaService.time_allowances.findFirst({
+      where: { user_id: userId, group_id: groupId, day: day.utcDay, status: 'PENDENTE' },
+    });
+    if (pending) {
+      throw new UnprocessableEntityException('Já existe um abono pendente neste dia e grupo');
+    }
+
+    const records = await this.prismaService.time_records.findMany({
+      where: { user_id: userId, recorded_at: { gte: day.start, lt: day.end } },
+      include: { early_exit_justifications: { select: { status: true } } },
+      orderBy: { recorded_at: 'asc' },
+    });
+    if (hasOpenGroupEntry(records, groupId)) {
+      throw new UnprocessableEntityException('A entrada deste grupo ainda está aberta');
+    }
+
+    const summary = await this.summary(userId, day.date);
+    const line = summary.groups.find((group) => group.id === groupId);
+    const missing =
+      line?.expectedMinutes == null ? null : line.expectedMinutes - line.workedMinutes;
+    if (missing == null || missing <= 0) {
+      throw new UnprocessableEntityException('Não há horas em falta neste dia');
+    }
+
+    const documents = files.map((file) => {
+      const content = new Uint8Array(file.buffer.byteLength);
+      content.set(file.buffer);
+      return {
+        fileName: safeFileName(file.originalname, file.mimetype),
+        mimeType: file.mimetype,
+        sizeBytes: file.size,
+        content,
+      };
+    });
+    const now = new Date();
+    const allowanceId = randomUUID();
+    const created = await this.prismaService.$transaction(async (tx) => {
+      await tx.time_allowances.create({
+        data: {
+          id: allowanceId,
+          user_id: userId,
+          group_id: groupId,
+          day: day.utcDay,
+          minutes: missing,
+          reason,
+          created_at: now,
+          updated_at: now,
+        },
+      });
+      if (documents.length > 0) {
+        await tx.allowance_documents.createMany({
+          data: documents.map((document) => ({
+            id: randomUUID(),
+            allowance_id: allowanceId,
+            file_name: document.fileName,
+            mime_type: document.mimeType,
+            size_bytes: document.sizeBytes,
+            content: document.content,
+            created_at: now,
+          })),
+        });
+      }
+      return tx.time_allowances.findUniqueOrThrow({
+        where: { id: allowanceId },
+        include: allowanceInclude,
+      });
+    });
+    return toAllowance(created);
+  }
+
+  async readAllowanceDocument(allowanceId: string, documentId: string) {
+    const document = await this.prismaService.allowance_documents.findFirst({
+      where: { id: documentId, allowance_id: allowanceId },
+    });
+    if (!document) throw new NotFoundException('Documento não encontrado');
+    return document;
+  }
+
+  async listAllowances() {
+    const rows = await this.prismaService.time_allowances.findMany({
+      include: allowanceInclude,
+      orderBy: { created_at: 'desc' },
+    });
+    return rows.map(toAllowance);
+  }
+
+  async reviewAllowance(
+    reviewerId: string,
+    input: { id?: string; status?: string },
+  ) {
+    const id = input.id?.trim();
+    if (!id || (input.status !== 'APROVADO' && input.status !== 'RECUSADO')) {
+      throw new UnprocessableEntityException('Abono e decisão são obrigatórios');
+    }
+    const item = await this.prismaService.time_allowances.findUnique({ where: { id } });
+    if (!item) throw new NotFoundException('Abono não encontrado');
+    if (item.user_id === reviewerId) {
+      throw new ConflictException('Não é possível analisar o próprio abono');
+    }
+    if (item.status !== 'PENDENTE') {
+      throw new UnprocessableEntityException('O abono já foi analisado');
+    }
+
+    const now = new Date();
+    const updated = await this.prismaService.time_allowances.update({
+      where: { id: item.id },
+      data: {
+        status: input.status,
+        reviewer_id: reviewerId,
+        reviewed_at: now,
+        updated_at: now,
+      },
+      include: allowanceInclude,
+    });
+    return toAllowance(updated);
   }
 }
 
@@ -830,6 +996,88 @@ function workedByGroup(records: PunchRecord[], end: Date) {
   }
 
   return totals;
+}
+
+function creditAllowances(
+  groups: (GroupHours & { remainingMinutes: number | null })[],
+  allowances: { group_id: string; minutes: number; status: string }[],
+) {
+  const extra = new Map<string, number>();
+  for (const item of allowances) {
+    if (item.status !== 'APROVADO') continue;
+    const key = groupKey(item.group_id);
+    extra.set(key, (extra.get(key) ?? 0) + item.minutes);
+  }
+  return groups.map((line) => {
+    const add = extra.get(groupKey(line.id)) ?? 0;
+    if (!add || line.expectedMinutes === null) return line;
+    const room = Math.max(0, line.expectedMinutes - line.workedMinutes);
+    const workedMinutes = line.workedMinutes + Math.min(add, room);
+    return {
+      ...line,
+      workedMinutes,
+      remainingMinutes: line.expectedMinutes - workedMinutes,
+    };
+  });
+}
+
+function hasOpenGroupEntry(
+  records: { type: string; group_id: string | null; early_exit_justifications?: { status: string } | null }[],
+  groupId: string,
+) {
+  let open = false;
+  for (const record of records) {
+    if (isRefusedExit(record)) continue;
+    if (record.type === 'entrada' && record.group_id === groupId) open = true;
+    if (record.type === 'saida' && open) open = false;
+  }
+  return open;
+}
+
+const allowanceInclude = {
+  users: { select: { id: true, suap_enrollment: true, name: true } },
+  reviewer: { select: { name: true } },
+  groups: { select: { id: true, name: true } },
+  allowance_documents: { select: { id: true, file_name: true } },
+} as const;
+
+function safeFileName(original: string, mimeType: string) {
+  const base = original.split(/[/\\]/).pop()?.replace(/[^\w.\- ()áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ]/g, '') || 'documento';
+  const trimmed = base.slice(0, 180);
+  const extension = mimeType === 'application/pdf' ? '.pdf' : mimeType === 'image/png' ? '.png' : mimeType === 'image/webp' ? '.webp' : '.jpg';
+  return trimmed.toLowerCase().endsWith(extension) ? trimmed : `${trimmed}${extension}`;
+}
+
+function toAllowance(row: {
+  id: string;
+  minutes: number;
+  reason: string;
+  status: 'PENDENTE' | 'APROVADO' | 'RECUSADO';
+  day: Date;
+  reviewed_at: Date | null;
+  users: { id: string; suap_enrollment: string; name: string | null };
+  reviewer: { name: string | null } | null;
+  groups: { id: string; name: string };
+  allowance_documents: { id: string; file_name: string }[];
+}) {
+  return {
+    id: row.id,
+    userId: row.users.id,
+    suapEnrollment: row.users.suap_enrollment,
+    name: row.users.name,
+    groupId: row.groups.id,
+    groupName: row.groups.name,
+    day: dateOnly(row.day),
+    minutes: row.minutes,
+    reason: row.reason,
+    status: row.status,
+    documents: row.allowance_documents.map((document) => ({
+      id: document.id,
+      fileName: document.file_name,
+    })),
+    reviewerName: row.reviewer?.name ?? null,
+    reviewedAt: row.reviewed_at,
+  };
 }
 
 function creditApproved(

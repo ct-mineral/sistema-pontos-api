@@ -21,6 +21,12 @@ enum JustificationStatus {
   RECUSADA
 }
 
+enum AllowanceStatus {
+  PENDENTE
+  APROVADO
+  RECUSADO
+}
+
 model users {
   id              String   @id @db.Uuid
   suap_enrollment String   @unique @db.VarChar(30)
@@ -36,6 +42,8 @@ model users {
   workload_adjustments      workload_adjustments[]
   early_exit_justifications early_exit_justifications[] @relation("justification_owner")
   reviewed_justifications   early_exit_justifications[] @relation("justification_reviewer")
+  time_allowances           time_allowances[]           @relation("allowance_owner")
+  reviewed_allowances       time_allowances[]           @relation("allowance_reviewer")
 }
 
 model groups {
@@ -51,6 +59,7 @@ model groups {
   users_groups         users_groups[]
   time_records         time_records[]
   workload_adjustments workload_adjustments[]
+  time_allowances      time_allowances[]
 }
 
 model users_groups {
@@ -123,4 +132,35 @@ model workload_adjustments {
 
   users  users   @relation(fields: [user_id], references: [id])
   groups groups? @relation(fields: [group_id], references: [id])
+}
+
+model time_allowances {
+  id          String          @id @db.Uuid
+  user_id     String          @db.Uuid
+  group_id    String          @db.Uuid
+  day         DateTime        @db.Date
+  minutes     Int
+  reason      String          @db.VarChar(500)
+  status      AllowanceStatus @default(PENDENTE)
+  reviewer_id String?         @db.Uuid
+  reviewed_at DateTime?       @db.Timestamp(6)
+  created_at  DateTime        @db.Timestamp(6)
+  updated_at  DateTime        @db.Timestamp(6)
+
+  users                users                 @relation("allowance_owner", fields: [user_id], references: [id])
+  reviewer             users?                @relation("allowance_reviewer", fields: [reviewer_id], references: [id])
+  groups               groups                @relation(fields: [group_id], references: [id])
+  allowance_documents  allowance_documents[]
+}
+
+model allowance_documents {
+  id           String   @id @db.Uuid
+  allowance_id String   @db.Uuid
+  file_name    String   @db.VarChar(200)
+  mime_type    String   @db.VarChar(100)
+  size_bytes   Int
+  content      Bytes
+  created_at   DateTime @db.Timestamp(6)
+
+  time_allowances time_allowances @relation(fields: [allowance_id], references: [id], onDelete: Cascade)
 }
