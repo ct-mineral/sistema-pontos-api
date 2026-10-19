@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { minutesBetween, parseClock } from '../../common/clock.js';
+import { parseCalendarDate } from '../../common/calendar.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 
 @Injectable()
@@ -112,8 +113,8 @@ export class WorkloadAdjustmentsService {
     const groupId = input.groupId?.trim();
     const start = parseClock(input.startTime);
     const end = parseClock(input.endTime);
-    const startDate = parseDate(input.startDate);
-    const endDate = input.endDate ? parseDate(input.endDate) : null;
+    const startDate = parseCalendarDate(input.startDate);
+    const endDate = input.endDate ? parseCalendarDate(input.endDate) : null;
 
     if (
       !suapEnrollment ||
@@ -216,15 +217,3 @@ function toAdjustment(adjustment: {
   };
 }
 
-function parseDate(value?: string) {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  const valid =
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day;
-
-  return valid ? date : null;
-}

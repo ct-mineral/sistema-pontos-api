@@ -6,11 +6,33 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { Express } from 'express';
-import { clockContains, fortalezaClock, parseClock } from '../../common/clock.js';
+import { clockContains, fortalezaClock, fortalezaDate } from '../../common/clock.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 import { QrCodesService } from '../qr-codes/qr-codes.service.js';
+import { allowanceInclude, safeFileName, toAllowance } from './allowance.js';
 import { RECORD_TYPES } from './constants/record-types.constants.js';
+import { dateOnly, eachDay, resolveDay } from './day.js';
 import { GroupsService } from '../groups/groups.service.js';
+import {
+  aggregateGroups,
+  creditAllowances,
+  creditApproved,
+  groupKey,
+  hasOpenGroupEntry,
+  plansFrom,
+  type GroupHours,
+  type PunchRecord,
+  totalsOf,
+  workedByGroup,
+} from './hours.js';
+import {
+  assertCanRefuse,
+  isReviewStatus,
+  justificationInclude,
+  makeupWindow,
+  toJustification,
+} from './justification.js';
+import { entryBefore, isRefusedExit, toRecord } from './sequence.js';
 import { WorkloadAdjustmentsService } from '../workload-adjustments/workload-adjustments.service.js';
 
 type TimeRecordType = (typeof RECORD_TYPES)[number];
@@ -491,14 +513,7 @@ export class TimeRecordsService {
   }
 
   async summaryByEnrollment(suapEnrollment?: string, date?: string) {
-    const enrollment = suapEnrollment?.trim();
-    if (!enrollment) {
-      throw new UnprocessableEntityException('Matrícula é obrigatória');
-    }
-    const user = await this.prismaService.users.findUnique({
-      where: { suap_enrollment: enrollment },
-    });
-    if (!user) throw new NotFoundException('Usuário não encontrado');
+    const user = await this.userByEnrollment(suapEnrollment);
     return this.summary(user.id, date);
   }
 
@@ -544,17 +559,20 @@ export class TimeRecordsService {
     from?: string,
     to?: string,
   ) {
+    const user = await this.userByEnrollment(suapEnrollment);
+    return this.period(user.id, from, to);
+  }
+
+  private async userByEnrollment(suapEnrollment?: string) {
     const enrollment = suapEnrollment?.trim();
     if (!enrollment) {
       throw new UnprocessableEntityException('Matrícula é obrigatória');
     }
-
     const user = await this.prismaService.users.findUnique({
       where: { suap_enrollment: enrollment },
     });
     if (!user) throw new NotFoundException('Usuário não encontrado');
-
-    return this.period(user.id, from, to);
+    return user;
   }
 
   async allowanceGroups(userId: string) {
@@ -719,512 +737,3 @@ function isRecordType(value: string): value is TimeRecordType {
   return (RECORD_TYPES as readonly string[]).includes(value);
 }
 
-type ReviewStatus = 'APROVADA' | 'APROVADA_PARCIAL' | 'RECUSADA';
-
-function isReviewStatus(value?: string): value is ReviewStatus {
-  return value === 'APROVADA' || value === 'APROVADA_PARCIAL' || value === 'RECUSADA';
-}
-
-function isRefusedExit(record?: { type: string; early_exit_justifications?: { status: string } | null } | null) {
-  return record?.type === 'saida' && record.early_exit_justifications?.status === 'RECUSADA';
-}
-
-const justificationInclude = {
-  users: { select: { id: true, suap_enrollment: true, name: true } },
-  reviewer: { select: { name: true } },
-  time_records: {
-    select: {
-      recorded_at: true,
-      groups: { select: { name: true } },
-    },
-  },
-} as const;
-
-function toJustification(row: {
-  id: string;
-  scheduled_end: string;
-  reason: string | null;
-  status: 'PENDENTE' | 'APROVADA' | 'APROVADA_PARCIAL' | 'RECUSADA';
-  makeup_date: Date | null;
-  makeup_start: string | null;
-  makeup_end: string | null;
-  reviewed_at: Date | null;
-  users: { id: string; suap_enrollment: string; name: string | null };
-  reviewer: { name: string | null } | null;
-  time_records: { recorded_at: Date; groups: { name: string } | null };
-}) {
-  return {
-    id: row.id,
-    userId: row.users.id,
-    suapEnrollment: row.users.suap_enrollment,
-    name: row.users.name,
-    groupName: row.time_records.groups?.name ?? null,
-    recordedAt: row.time_records.recorded_at,
-    scheduledEnd: row.scheduled_end,
-    reason: row.reason,
-    status: row.status,
-    makeupDate: dateOnly(row.makeup_date),
-    makeupStart: row.makeup_start,
-    makeupEnd: row.makeup_end,
-    reviewerName: row.reviewer?.name ?? null,
-    reviewedAt: row.reviewed_at,
-  };
-}
-
-function makeupWindow(
-  item: { scheduled_end: string; time_records: { recorded_at: Date } },
-  makeupDate?: string,
-  makeupStart?: string,
-) {
-  const date = makeupDate?.trim();
-  const start = parseClock(makeupStart?.trim().slice(0, 5));
-  const punchDay = fortalezaDate(item.time_records.recorded_at);
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !start) {
-    throw new UnprocessableEntityException('Data e horário do acerto são obrigatórios');
-  }
-  if (date <= punchDay) {
-    throw new UnprocessableEntityException('A data do acerto precisa ser posterior à saída');
-  }
-
-  const exitClock = fortalezaClock(item.time_records.recorded_at);
-  const gap = clockMinutes(item.scheduled_end) - clockMinutes(exitClock);
-  if (gap <= 0) {
-    throw new UnprocessableEntityException('Não há horas restantes para acertar');
-  }
-  const end = start.hours * 60 + start.minutes + gap;
-  if (end >= 24 * 60) {
-    throw new UnprocessableEntityException('O horário de início precisa deixar o acerto no mesmo dia');
-  }
-
-  return {
-    date: parseUtcDate(date),
-    start: start.text,
-    end: minutesToClock(end),
-  };
-}
-
-function assertCanRefuse(item: { scheduled_end: string; time_records: { recorded_at: Date } }) {
-  const punchDay = fortalezaDate(item.time_records.recorded_at);
-  const today = fortalezaDate(new Date());
-  if (punchDay !== today || fortalezaClock() >= item.scheduled_end) {
-    throw new UnprocessableEntityException(
-      'Depois do fim do expediente, escolha aprovação ou aprovação parcial',
-    );
-  }
-}
-
-function clockMinutes(value: string) {
-  const [hours, minutes] = value.split(':').map(Number);
-  return hours * 60 + minutes;
-}
-
-function minutesToClock(total: number) {
-  const hours = Math.floor(total / 60);
-  const minutes = total % 60;
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-}
-
-function parseUtcDate(value: string) {
-  const [year, month, day] = value.split('-').map(Number);
-  return new Date(Date.UTC(year, month - 1, day));
-}
-
-function dateOnly(value: Date | null) {
-  return value ? value.toISOString().slice(0, 10) : null;
-}
-
-function entryBefore<T extends { type: string; early_exit_justifications?: { status: string } | null }>(
-  records: T[],
-  index: number,
-) {
-  if (records[index]?.type !== 'saida') return null;
-  for (let cursor = index + 1; cursor < records.length; cursor += 1) {
-    const candidate = records[cursor];
-    if (isRefusedExit(candidate)) continue;
-    return candidate?.type === 'entrada' ? candidate : null;
-  }
-  return null;
-}
-
-function toRecord(
-  record: {
-    id: string;
-    type: string;
-    recorded_at: Date;
-    created_at: Date;
-    activity: string | null;
-  },
-  qrCode: { id: string; location: string },
-  entry?: { id: string; recorded_at: Date } | null,
-  group?: { id: string; name: string } | null,
-  justification?: {
-    scheduled_end: string;
-    reason: string | null;
-    status: 'PENDENTE' | 'APROVADA' | 'APROVADA_PARCIAL' | 'RECUSADA';
-    makeup_date?: Date | null;
-    makeup_start?: string | null;
-    makeup_end?: string | null;
-  } | null,
-) {
-  return {
-    id: record.id,
-    type: record.type,
-    recordedAt: record.recorded_at,
-    createdAt: record.created_at,
-    activity: record.activity,
-    entry: entry ? { id: entry.id, recordedAt: entry.recorded_at } : null,
-    group: group ? { id: group.id, name: group.name } : null,
-    qrCode: {
-      id: qrCode.id,
-      location: qrCode.location,
-    },
-    earlyExit: justification
-      ? {
-          scheduledEnd: justification.scheduled_end,
-          reason: justification.reason,
-          status: justification.status,
-          makeupDate: dateOnly(justification.makeup_date ?? null),
-          makeupStart: justification.makeup_start ?? null,
-          makeupEnd: justification.makeup_end ?? null,
-        }
-      : null,
-  };
-}
-
-type GroupHours = {
-  id: string | null;
-  name: string;
-  startTime: string | null;
-  endTime: string | null;
-  workedMinutes: number;
-  expectedMinutes: number | null;
-  remainingMinutes?: number | null;
-  scheduleVaries: boolean;
-};
-
-type PunchRecord = {
-  type: string;
-  recorded_at: Date;
-  group_id: string | null;
-  groups: {
-    id: string;
-    name: string;
-    start_time: string | null;
-    end_time: string | null;
-    daily_workload_minutes: number;
-  } | null;
-  early_exit_justifications?: { status: string } | null;
-};
-
-function groupKey(groupId: string | null | undefined) {
-  return groupId ?? '';
-}
-
-function plansFrom(
-  groups: {
-    id: string;
-    name: string;
-    start_time: string | null;
-    end_time: string | null;
-    daily_workload_minutes: number;
-  }[],
-  adjustments: {
-    group_id: string | null;
-    start_time: string | null;
-    end_time: string | null;
-    daily_workload_minutes: number;
-  }[],
-) {
-  const legacy = adjustments.find((item) => !item.group_id);
-  const specific = adjustments.filter((item) => item.group_id);
-
-  if (groups.length === 0) {
-    if (!legacy) return [];
-    return [
-      {
-        key: '',
-        hours: {
-          id: null,
-          name: 'Ajuste individual',
-          startTime: legacy.start_time,
-          endTime: legacy.end_time,
-          expectedMinutes: legacy.daily_workload_minutes,
-        },
-      },
-    ];
-  }
-
-  return groups.map((group) => {
-    const adjustment = specific.find((item) => item.group_id === group.id);
-    const useLegacy = groups.length === 1 && legacy && specific.length === 0;
-    const source = useLegacy ? legacy : adjustment;
-    return {
-      key: group.id,
-      hours: {
-        id: group.id,
-        name: group.name,
-        startTime: source?.start_time ?? group.start_time,
-        endTime: source?.end_time ?? group.end_time,
-        expectedMinutes: source?.daily_workload_minutes ?? group.daily_workload_minutes,
-      },
-    };
-  });
-}
-
-function workedByGroup(records: PunchRecord[], end: Date) {
-  const totals = new Map<string, number>();
-  let open: { at: Date; key: string } | null = null;
-  const add = (key: string, start: Date, finish: Date) => {
-    totals.set(key, (totals.get(key) ?? 0) + minutesBetween(start, finish));
-  };
-
-  for (const record of records) {
-    if (isRefusedExit(record)) continue;
-    if (record.type === 'entrada') {
-      open = { at: record.recorded_at, key: groupKey(record.group_id) };
-      continue;
-    }
-    if (record.type === 'saida' && open) {
-      add(open.key, open.at, record.recorded_at);
-      open = null;
-    }
-  }
-
-  if (open) {
-    const limit = new Date() < end ? new Date() : end;
-    add(open.key, open.at, limit);
-  }
-
-  return totals;
-}
-
-function creditAllowances(
-  groups: (GroupHours & { remainingMinutes: number | null })[],
-  allowances: { group_id: string; minutes: number; status: string }[],
-) {
-  const extra = new Map<string, number>();
-  for (const item of allowances) {
-    if (item.status !== 'APROVADO') continue;
-    const key = groupKey(item.group_id);
-    extra.set(key, (extra.get(key) ?? 0) + item.minutes);
-  }
-  return groups.map((line) => {
-    const add = extra.get(groupKey(line.id)) ?? 0;
-    if (!add || line.expectedMinutes === null) return line;
-    const room = Math.max(0, line.expectedMinutes - line.workedMinutes);
-    const workedMinutes = line.workedMinutes + Math.min(add, room);
-    return {
-      ...line,
-      workedMinutes,
-      remainingMinutes: line.expectedMinutes - workedMinutes,
-    };
-  });
-}
-
-function hasOpenGroupEntry(
-  records: { type: string; group_id: string | null; early_exit_justifications?: { status: string } | null }[],
-  groupId: string,
-) {
-  let open = false;
-  for (const record of records) {
-    if (isRefusedExit(record)) continue;
-    if (record.type === 'entrada' && record.group_id === groupId) open = true;
-    if (record.type === 'saida' && open) open = false;
-  }
-  return open;
-}
-
-const allowanceInclude = {
-  users: { select: { id: true, suap_enrollment: true, name: true } },
-  reviewer: { select: { name: true } },
-  groups: { select: { id: true, name: true } },
-  allowance_documents: { select: { id: true, file_name: true } },
-} as const;
-
-function safeFileName(original: string, mimeType: string) {
-  const base = original.split(/[/\\]/).pop()?.replace(/[^\w.\- ()áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ]/g, '') || 'documento';
-  const trimmed = base.slice(0, 180);
-  const extension = mimeType === 'application/pdf' ? '.pdf' : mimeType === 'image/png' ? '.png' : mimeType === 'image/webp' ? '.webp' : '.jpg';
-  return trimmed.toLowerCase().endsWith(extension) ? trimmed : `${trimmed}${extension}`;
-}
-
-function toAllowance(row: {
-  id: string;
-  minutes: number;
-  reason: string;
-  status: 'PENDENTE' | 'APROVADO' | 'RECUSADO';
-  day: Date;
-  reviewed_at: Date | null;
-  users: { id: string; suap_enrollment: string; name: string | null };
-  reviewer: { name: string | null } | null;
-  groups: { id: string; name: string };
-  allowance_documents: { id: string; file_name: string }[];
-}) {
-  return {
-    id: row.id,
-    userId: row.users.id,
-    suapEnrollment: row.users.suap_enrollment,
-    name: row.users.name,
-    groupId: row.groups.id,
-    groupName: row.groups.name,
-    day: dateOnly(row.day),
-    minutes: row.minutes,
-    reason: row.reason,
-    status: row.status,
-    documents: row.allowance_documents.map((document) => ({
-      id: document.id,
-      fileName: document.file_name,
-    })),
-    reviewerName: row.reviewer?.name ?? null,
-    reviewedAt: row.reviewed_at,
-  };
-}
-
-function creditApproved(
-  groups: (GroupHours & { remainingMinutes: number | null })[],
-  records: PunchRecord[],
-) {
-  const approved = new Set(
-    records
-      .filter(
-        (record) =>
-          record.type === 'saida' && record.early_exit_justifications?.status === 'APROVADA',
-      )
-      .map((record) => groupKey(record.group_id)),
-  );
-  return groups.map((line) => {
-    if (!approved.has(groupKey(line.id)) || line.expectedMinutes === null) return line;
-    const workedMinutes = Math.max(line.workedMinutes, line.expectedMinutes);
-    return {
-      ...line,
-      workedMinutes,
-      remainingMinutes: line.expectedMinutes - workedMinutes,
-    };
-  });
-}
-
-function totalsOf(groups: { workedMinutes: number; expectedMinutes: number | null }[]) {
-  const known = groups
-    .map((group) => group.expectedMinutes)
-    .filter((value): value is number => value !== null);
-  const workedMinutes = groups.reduce((total, group) => total + group.workedMinutes, 0);
-  const expectedMinutes =
-    known.length === 0 ? null : known.reduce((total, value) => total + value, 0);
-  return {
-    workedMinutes,
-    expectedMinutes,
-    remainingMinutes:
-      expectedMinutes === null ? null : expectedMinutes - workedMinutes,
-  };
-}
-
-function aggregateGroups(
-  days: { groups: (GroupHours & { remainingMinutes: number | null })[] }[],
-) {
-  const order: string[] = [];
-  const merged = new Map<
-    string,
-    GroupHours & { scheduleKey: string }
-  >();
-
-  for (const day of days) {
-    for (const group of day.groups) {
-      const key = group.id ?? `legacy:${group.name}`;
-      const scheduleKey = `${group.startTime ?? ''}|${group.endTime ?? ''}`;
-      const current = merged.get(key);
-      if (!current) {
-        order.push(key);
-        merged.set(key, { ...group, scheduleKey, scheduleVaries: false });
-        continue;
-      }
-      current.workedMinutes += group.workedMinutes;
-      if (current.expectedMinutes === null && group.expectedMinutes === null) {
-        current.expectedMinutes = null;
-      } else {
-        current.expectedMinutes =
-          (current.expectedMinutes ?? 0) + (group.expectedMinutes ?? 0);
-      }
-      if (current.scheduleKey !== scheduleKey) {
-        current.scheduleVaries = true;
-        current.startTime = null;
-        current.endTime = null;
-      }
-    }
-  }
-
-  return order.map((key) => {
-    const group = merged.get(key)!;
-    return {
-      id: group.id,
-      name: group.name,
-      startTime: group.startTime,
-      endTime: group.endTime,
-      workedMinutes: group.workedMinutes,
-      expectedMinutes: group.expectedMinutes,
-      remainingMinutes:
-        group.expectedMinutes === null
-          ? null
-          : group.expectedMinutes - group.workedMinutes,
-      scheduleVaries: group.scheduleVaries,
-    };
-  });
-}
-
-function minutesBetween(start: Date, end: Date) {
-  return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 60000));
-}
-
-function resolveDay(date?: string) {
-  const value = date ?? brazilToday();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new UnprocessableEntityException('Data inválida');
-  }
-
-  const [year, month, day] = value.split('-').map(Number);
-  const utcDay = new Date(Date.UTC(year, month - 1, day));
-  const valid =
-    utcDay.getUTCFullYear() === year &&
-    utcDay.getUTCMonth() === month - 1 &&
-    utcDay.getUTCDate() === day;
-
-  if (!valid) throw new UnprocessableEntityException('Data inválida');
-
-  const start = new Date(Date.UTC(year, month - 1, day, 3, 0, 0));
-  return {
-    date: value,
-    utcDay,
-    start,
-    end: new Date(start.getTime() + 24 * 60 * 60 * 1000),
-  };
-}
-
-function eachDay(from: string, to: string) {
-  const [fromYear, fromMonth, fromDay] = from.split('-').map(Number);
-  const [toYear, toMonth, toDay] = to.split('-').map(Number);
-  const cursor = new Date(Date.UTC(fromYear, fromMonth - 1, fromDay));
-  const end = new Date(Date.UTC(toYear, toMonth - 1, toDay));
-  const dates: string[] = [];
-
-  while (cursor <= end) {
-    const year = cursor.getUTCFullYear();
-    const month = String(cursor.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(cursor.getUTCDate()).padStart(2, '0');
-    dates.push(`${year}-${month}-${day}`);
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-
-  return dates;
-}
-
-function brazilToday() {
-  return fortalezaDate(new Date());
-}
-
-function fortalezaDate(date: Date) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Fortaleza',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
-}

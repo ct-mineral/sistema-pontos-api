@@ -5,6 +5,7 @@ export type Clock = {
 };
 
 const CLOCK = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const FORTALEZA = 'America/Fortaleza';
 
 export function parseClock(value?: string): Clock | null {
   const text = value?.trim();
@@ -28,9 +29,27 @@ function formatClock(hours: number, minutes: number) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
+export function clockMinutes(value: string) {
+  const [hours, minutes] = value.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+export function minutesToClock(total: number) {
+  return formatClock(Math.floor(total / 60), total % 60);
+}
+
+export function fortalezaDate(date: Date) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: FORTALEZA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
 export function fortalezaClock(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'America/Fortaleza',
+    timeZone: FORTALEZA,
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',

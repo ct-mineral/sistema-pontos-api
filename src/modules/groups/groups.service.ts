@@ -130,22 +130,7 @@ export class GroupsService {
   }
 
   async assign(input: { suapEnrollment?: string; groupId?: string }) {
-    const suapEnrollment = input.suapEnrollment?.trim();
-    if (!suapEnrollment || !input.groupId) {
-      throw new UnprocessableEntityException(
-        'Matrícula e grupo são obrigatórios',
-      );
-    }
-
-    const user = await this.prismaService.users.findUnique({
-      where: { suap_enrollment: suapEnrollment },
-    });
-    if (!user?.status) throw new NotFoundException('Usuário não encontrado');
-
-    const group = await this.prismaService.groups.findUnique({
-      where: { id: input.groupId },
-    });
-    if (!group?.status) throw new NotFoundException('Grupo não encontrado');
+    const { user, group } = await this.activeUserAndGroup(input);
 
     const membership = await this.prismaService.users_groups.findFirst({
       where: { user_id: user.id, group_id: group.id },
@@ -205,32 +190,8 @@ export class GroupsService {
     return { id: membership.id, userId: user.id, groupId: input.groupId };
   }
 
-  async findMembership(userId: string) {
-    const membership = await this.prismaService.users_groups.findFirst({
-      where: { user_id: userId, groups: { status: true } },
-      include: { groups: true },
-    });
-
-    return membership?.groups ?? null;
-  }
-
   async reassign(input: { suapEnrollment?: string; groupId?: string }) {
-    const suapEnrollment = input.suapEnrollment?.trim();
-    if (!suapEnrollment || !input.groupId) {
-      throw new UnprocessableEntityException(
-        'Matrícula e grupo são obrigatórios',
-      );
-    }
-
-    const user = await this.prismaService.users.findUnique({
-      where: { suap_enrollment: suapEnrollment },
-    });
-    if (!user?.status) throw new NotFoundException('Usuário não encontrado');
-
-    const group = await this.prismaService.groups.findUnique({
-      where: { id: input.groupId },
-    });
-    if (!group?.status) throw new NotFoundException('Grupo não encontrado');
+    const { user, group } = await this.activeUserAndGroup(input);
 
     const membership = await this.prismaService.users_groups.findFirst({
       where: { user_id: user.id },
@@ -253,6 +214,27 @@ export class GroupsService {
       groupId: link.group_id,
       createdAt: link.created_at,
     };
+  }
+
+  private async activeUserAndGroup(input: { suapEnrollment?: string; groupId?: string }) {
+    const suapEnrollment = input.suapEnrollment?.trim();
+    if (!suapEnrollment || !input.groupId) {
+      throw new UnprocessableEntityException(
+        'Matrícula e grupo são obrigatórios',
+      );
+    }
+
+    const user = await this.prismaService.users.findUnique({
+      where: { suap_enrollment: suapEnrollment },
+    });
+    if (!user?.status) throw new NotFoundException('Usuário não encontrado');
+
+    const group = await this.prismaService.groups.findUnique({
+      where: { id: input.groupId },
+    });
+    if (!group?.status) throw new NotFoundException('Grupo não encontrado');
+
+    return { user, group };
   }
 
   private async assertShiftAvailable(
