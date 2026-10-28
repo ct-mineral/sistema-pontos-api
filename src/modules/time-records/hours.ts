@@ -230,6 +230,66 @@ export function aggregateGroups(
   });
 }
 
+export type PunchInterval = {
+  entryAt: Date | null;
+  exitAt: Date | null;
+  groupId: string | null;
+  description: string | null;
+  refused: boolean;
+};
+
+export function punchIntervals(
+  records: {
+    type: string;
+    recorded_at: Date;
+    group_id: string | null;
+    activity?: string | null;
+    early_exit_justifications?: { status: string } | null;
+  }[],
+): PunchInterval[] {
+  const rows: PunchInterval[] = [];
+  let open: { at: Date; groupId: string | null } | null = null;
+
+  for (const record of records) {
+    if (isRefusedExit(record)) {
+      rows.push({
+        entryAt: open?.at ?? null,
+        exitAt: record.recorded_at,
+        groupId: open?.groupId ?? record.group_id,
+        description: record.activity ?? null,
+        refused: true,
+      });
+      continue;
+    }
+    if (record.type === 'entrada') {
+      open = { at: record.recorded_at, groupId: record.group_id };
+      continue;
+    }
+    if (record.type === 'saida') {
+      rows.push({
+        entryAt: open?.at ?? null,
+        exitAt: record.recorded_at,
+        groupId: open?.groupId ?? record.group_id,
+        description: record.activity ?? null,
+        refused: false,
+      });
+      open = null;
+    }
+  }
+
+  if (open) {
+    rows.push({
+      entryAt: open.at,
+      exitAt: null,
+      groupId: open.groupId,
+      description: null,
+      refused: false,
+    });
+  }
+
+  return rows;
+}
+
 function elapsedMinutes(start: Date, end: Date) {
   return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 60000));
 }

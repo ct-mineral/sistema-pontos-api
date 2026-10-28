@@ -124,11 +124,12 @@ export class AuthService {
   }
 
   private toRole(tipoUsuario: string): UserRole {
-    if (!isSuapType(tipoUsuario)) {
+    const type = suapTypeName(tipoUsuario);
+    if (!isSuapType(type)) {
       throw new UnauthorizedException('Tipo de usuário SUAP não reconhecido');
     }
 
-    return ROLE_BY_SUAP_TYPE[tipoUsuario];
+    return ROLE_BY_SUAP_TYPE[type];
   }
 
   private sign(
@@ -240,6 +241,12 @@ export class AuthService {
   private secret() {
     return this.configService.getOrThrow<string>('APP_JWT_SECRET');
   }
+}
+
+function suapTypeName(tipoUsuario: string) {
+  const value = tipoUsuario.trim();
+  if (/^servidor\b/i.test(value)) return 'Servidor';
+  return value;
 }
 
 function isSuapType(value: string): value is keyof typeof ROLE_BY_SUAP_TYPE {

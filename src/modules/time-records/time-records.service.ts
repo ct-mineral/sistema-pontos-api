@@ -20,6 +20,7 @@ import {
   groupKey,
   hasOpenGroupEntry,
   plansFrom,
+  punchIntervals,
   type GroupHours,
   type PunchRecord,
   totalsOf,
@@ -434,6 +435,13 @@ export class TimeRecordsService {
           recordedAt: record.recorded_at,
           description: record.activity,
         })),
+      intervals: punchIntervals(records).map((interval) => ({
+        entryAt: interval.entryAt,
+        exitAt: interval.exitAt,
+        groupId: interval.groupId,
+        description: interval.description,
+        refused: interval.refused,
+      })),
       justifications: records.flatMap((record) => {
         const item = record.early_exit_justifications;
         if (!item) return [];
@@ -446,6 +454,7 @@ export class TimeRecordsService {
             makeupDate: dateOnly(item.makeup_date),
             makeupStart: item.makeup_start,
             makeupEnd: item.makeup_end,
+            groupId: record.group_id,
           },
         ];
       }),
