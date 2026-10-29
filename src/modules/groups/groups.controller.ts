@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
-import { Roles } from '../auth/decorator/roles.decorator.js';
+import { AllowViewer, Roles } from '../auth/decorator/roles.decorator.js';
 import { GroupsService } from './groups.service.js';
 
 @Controller('groups')
@@ -13,6 +13,7 @@ export class GroupsController {
   }
 
   @Roles('SERVIDOR')
+  @AllowViewer()
   @Get('list')
   list() {
     return this.groupsService.list();

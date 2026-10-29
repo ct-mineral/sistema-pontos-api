@@ -13,4 +13,5 @@ export type AuthenticatedUser = {
   name: string | null;
   photo: string | null;
   role: UserRole;
+  viewer: boolean;
 };

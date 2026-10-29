@@ -120,6 +120,7 @@ export class AuthService {
       name: user.name,
       photo: user.photo,
       role: user.role,
+      viewer: user.viewer,
     };
   }
 

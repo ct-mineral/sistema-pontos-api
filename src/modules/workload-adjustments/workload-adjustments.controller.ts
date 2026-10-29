@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import { Roles } from '../auth/decorator/roles.decorator.js';
+import { AllowViewer, Roles } from '../auth/decorator/roles.decorator.js';
 import { WorkloadAdjustmentsService } from './workload-adjustments.service.js';
 
 @Controller('workload-adjustments')
@@ -48,6 +48,7 @@ export class WorkloadAdjustmentsController {
   }
 
   @Roles('SERVIDOR')
+  @AllowViewer()
   @Get('list')
   list(@Query('suapEnrollment') suapEnrollment?: string) {
     return this.workloadAdjustmentsService.list(suapEnrollment);

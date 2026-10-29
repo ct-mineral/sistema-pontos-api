@@ -13,7 +13,7 @@ import {
   type UserRole,
 } from '../constants/roles.constants.js';
 import { IS_PUBLIC_KEY } from '../../../common/decorators/public.decorator.js';
-import { ROLES_KEY } from '../decorator/roles.decorator.js';
+import { ALLOW_VIEWER_KEY, ROLES_KEY } from '../decorator/roles.decorator.js';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -41,6 +41,12 @@ export class RolesGuard implements CanActivate {
     if (user.role === ROLE_BY_SUAP_TYPE.Servidor || roles.includes(user.role)) {
       return true;
     }
+
+    const allowViewer = this.reflector.getAllAndOverride<boolean>(ALLOW_VIEWER_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (allowViewer && user.viewer) return true;
 
     throw new ForbiddenException();
   }

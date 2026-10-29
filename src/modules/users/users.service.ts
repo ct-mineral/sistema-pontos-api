@@ -91,6 +91,30 @@ export class UsersService {
     return toUser(user);
   }
 
+  async updateViewer(input: { suapEnrollment?: string; viewer?: boolean }) {
+    const suapEnrollment = input.suapEnrollment?.trim();
+    if (!suapEnrollment || typeof input.viewer !== 'boolean') {
+      throw new UnprocessableEntityException(
+        'Matrícula e acesso de consulta são obrigatórios',
+      );
+    }
+
+    const current = await this.prismaService.users.findUnique({
+      where: { suap_enrollment: suapEnrollment },
+    });
+    if (!current) throw new NotFoundException('Usuário não encontrado');
+    if (current.role === 'SERVIDOR') {
+      throw new UnprocessableEntityException('Servidores já administram o painel.');
+    }
+
+    const user = await this.prismaService.users.update({
+      where: { id: current.id },
+      data: { viewer: input.viewer, updated_at: new Date() },
+    });
+
+    return toUser(user);
+  }
+
   async remove(input: { id?: string }, actorId: string) {
     if (!input.id) {
       throw new UnprocessableEntityException('Matrícula é obrigatória');
@@ -136,6 +160,7 @@ function toUser(user: {
   name: string | null;
   role: UserRole | null;
   status: boolean;
+  viewer: boolean;
 }) {
   return {
     id: user.id,
@@ -143,5 +168,6 @@ function toUser(user: {
     name: user.name,
     role: user.role,
     status: user.status,
+    viewer: user.viewer,
   };
 }

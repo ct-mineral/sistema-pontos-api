@@ -15,7 +15,7 @@ import { FilesInterceptor } from '@nestjs/platform-express';
 import type { Express } from 'express';
 import type { AuthenticatedUser } from '../auth/constants/roles.constants.js';
 import { CurrentUser } from '../auth/decorator/current-user.decorator.js';
-import { Roles } from '../auth/decorator/roles.decorator.js';
+import { AllowViewer, Roles } from '../auth/decorator/roles.decorator.js';
 import { TimeRecordsService } from './time-records.service.js';
 
 @Controller('time-records')
@@ -56,6 +56,7 @@ export class TimeRecordsController {
   }
 
   @Roles('SERVIDOR')
+  @AllowViewer()
   @Get('justifications')
   listJustifications() {
     return this.timeRecordsService.listJustifications();
@@ -99,12 +100,14 @@ export class TimeRecordsController {
   }
 
   @Roles('SERVIDOR')
+  @AllowViewer()
   @Get('allowances')
   listAllowances() {
     return this.timeRecordsService.listAllowances();
   }
 
   @Roles('SERVIDOR')
+  @AllowViewer()
   @Get('allowances/:allowanceId/documents/:documentId')
   async readAllowanceDocument(
     @Param('allowanceId') allowanceId: string,
@@ -150,6 +153,7 @@ export class TimeRecordsController {
   }
 
   @Roles('SERVIDOR')
+  @AllowViewer()
   @Get('summary-by-user')
   summaryByUser(
     @Query('suapEnrollment') suapEnrollment?: string,
@@ -168,6 +172,7 @@ export class TimeRecordsController {
   }
 
   @Roles('SERVIDOR')
+  @AllowViewer()
   @Get('period-by-user')
   periodByUser(
     @Query('suapEnrollment') suapEnrollment?: string,
