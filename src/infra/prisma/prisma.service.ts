@@ -9,9 +9,9 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   constructor(configService: ConfigService) {
-    const adapter = new PrismaPg({
-      connectionString: configService.getOrThrow<string>('DATABASE_URL'),
-    });
+    const adapter = new PrismaPg(
+      poolConfig(configService.getOrThrow<string>('DATABASE_URL')),
+    );
     super({ adapter });
   }
 
@@ -22,4 +22,16 @@ export class PrismaService
   async onModuleDestroy() {
     await this.$disconnect();
   }
+}
+
+function poolConfig(connectionString: string) {
+  if (process.env.VERCEL !== '1') return { connectionString };
+
+  const local = /@(localhost|127\.0\.0\.1)(?::|\/)/.test(connectionString);
+  return {
+    connectionString,
+    max: 1,
+    connectionTimeoutMillis: 10_000,
+    ssl: local ? undefined : { rejectUnauthorized: false },
+  };
 }

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "prisma generate",
+  "functions": {
+    "src/main.ts": {
+      "maxDuration": 30
+    }
+  }
+}
