@@ -10,6 +10,7 @@ import { TimeRecordsModule } from './modules/time-records/time-records.module.js
 import { GroupsModule } from './modules/groups/groups.module.js';
 import { WorkloadAdjustmentsModule } from './modules/workload-adjustments/workload-adjustments.module.js';
 import { UsersModule } from './modules/users/users.module.js';
+import { HealthModule } from './modules/health/health.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { UsersModule } from './modules/users/users.module.js';
     GroupsModule,
     WorkloadAdjustmentsModule,
     UsersModule,
+    HealthModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
