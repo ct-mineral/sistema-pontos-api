@@ -1,0 +1,167 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ALUNO
+  PRESTADOR
+  SERVIDOR
+}
+
+enum JustificationStatus {
+  PENDENTE
+  APROVADA
+  APROVADA_PARCIAL
+  RECUSADA
+}
+
+enum AllowanceStatus {
+  PENDENTE
+  APROVADO
+  RECUSADO
+}
+
+model users {
+  id              String   @id @db.Uuid
+  suap_enrollment String   @unique @db.VarChar(30)
+  name            String?  @db.VarChar(150)
+  photo           String?  @db.VarChar(500)
+  role            UserRole?
+  status          Boolean  @default(true)
+  viewer          Boolean  @default(false)
+  created_at      DateTime @db.Timestamp(6)
+  updated_at      DateTime @db.Timestamp(6)
+
+  users_groups              users_groups[]
+  time_records              time_records[]
+  workload_adjustments      workload_adjustments[]
+  early_exit_justifications early_exit_justifications[] @relation("justification_owner")
+  reviewed_justifications   early_exit_justifications[] @relation("justification_reviewer")
+  time_allowances           time_allowances[]           @relation("allowance_owner")
+  reviewed_allowances       time_allowances[]           @relation("allowance_reviewer")
+}
+
+model groups {
+  id                     String   @id @db.Uuid
+  name                   String   @db.VarChar(100)
+  daily_workload_minutes Int
+  start_time             String?  @db.VarChar(5)
+  end_time               String?  @db.VarChar(5)
+  status                 Boolean  @default(true)
+  created_at             DateTime @db.Timestamp(6)
+  updated_at             DateTime @db.Timestamp(6)
+
+  users_groups         users_groups[]
+  time_records         time_records[]
+  workload_adjustments workload_adjustments[]
+  time_allowances      time_allowances[]
+}
+
+model users_groups {
+  id         String   @id @db.Uuid
+  user_id    String   @db.Uuid
+  group_id   String   @db.Uuid
+  created_at DateTime @db.Timestamp(6)
+
+  users  users  @relation(fields: [user_id], references: [id])
+  groups groups @relation(fields: [group_id], references: [id])
+
+  @@unique([user_id, group_id])
+}
+
+model qr_codes {
+  id         String   @id @db.Uuid
+  location   String   @db.VarChar(150)
+  status     Boolean  @default(true)
+  created_at DateTime @db.Timestamp(6)
+
+  time_records time_records[]
+}
+
+model time_records {
+  id          String   @id @db.Uuid
+  user_id     String   @db.Uuid
+  qr_code_id  String   @db.Uuid
+  type        String   @db.VarChar(10)
+  recorded_at DateTime @db.Timestamp(6)
+  activity    String?  @db.VarChar(500)
+  group_id    String?  @db.Uuid
+  created_at  DateTime @db.Timestamp(6)
+
+  users                     users                      @relation(fields: [user_id], references: [id])
+  qr_codes                  qr_codes                   @relation(fields: [qr_code_id], references: [id])
+  groups                    groups?                    @relation(fields: [group_id], references: [id])
+  early_exit_justifications early_exit_justifications?
+}
+
+model early_exit_justifications {
+  id             String               @id @db.Uuid
+  time_record_id String               @unique @db.Uuid
+  user_id        String               @db.Uuid
+  reason         String?              @db.VarChar(500)
+  scheduled_end  String               @db.VarChar(5)
+  status         JustificationStatus  @default(PENDENTE)
+  makeup_date    DateTime?            @db.Date
+  makeup_start   String?              @db.VarChar(5)
+  makeup_end     String?              @db.VarChar(5)
+  reviewer_id    String?              @db.Uuid
+  reviewed_at    DateTime?            @db.Timestamp(6)
+  created_at     DateTime             @db.Timestamp(6)
+  updated_at     DateTime             @db.Timestamp(6)
+
+  time_records time_records @relation(fields: [time_record_id], references: [id])
+  users        users        @relation("justification_owner", fields: [user_id], references: [id])
+  reviewer     users?       @relation("justification_reviewer", fields: [reviewer_id], references: [id])
+}
+
+model workload_adjustments {
+  id                     String    @id @db.Uuid
+  user_id                String    @db.Uuid
+  daily_workload_minutes Int
+  start_time             String?   @db.VarChar(5)
+  end_time               String?   @db.VarChar(5)
+  group_id               String?   @db.Uuid
+  start_date             DateTime  @db.Date
+  end_date               DateTime? @db.Date
+  created_at             DateTime  @db.Timestamp(6)
+
+  users  users   @relation(fields: [user_id], references: [id])
+  groups groups? @relation(fields: [group_id], references: [id])
+}
+
+model time_allowances {
+  id          String          @id @db.Uuid
+  user_id     String          @db.Uuid
+  group_id    String          @db.Uuid
+  day         DateTime        @db.Date
+  minutes     Int
+  reason      String          @db.VarChar(500)
+  status      AllowanceStatus @default(PENDENTE)
+  reviewer_id String?         @db.Uuid
+  reviewed_at DateTime?       @db.Timestamp(6)
+  created_at  DateTime        @db.Timestamp(6)
+  updated_at  DateTime        @db.Timestamp(6)
+
+  users                users                 @relation("allowance_owner", fields: [user_id], references: [id])
+  reviewer             users?                @relation("allowance_reviewer", fields: [reviewer_id], references: [id])
+  groups               groups                @relation(fields: [group_id], references: [id])
+  allowance_documents  allowance_documents[]
+}
+
+model allowance_documents {
+  id           String   @id @db.Uuid
+  allowance_id String   @db.Uuid
+  file_name    String   @db.VarChar(200)
+  mime_type    String   @db.VarChar(100)
+  size_bytes   Int
+  content      Bytes
+  created_at   DateTime @db.Timestamp(6)
+
+  time_allowances time_allowances @relation(fields: [allowance_id], references: [id], onDelete: Cascade)
+}

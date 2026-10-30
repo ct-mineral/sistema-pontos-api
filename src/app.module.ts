@@ -1,10 +1,32 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller.js';
-import { AppService } from './app.service.js';
+import { ConfigModule } from '@nestjs/config';
+import { PrismaModule } from './infra/prisma/prisma.module.js';
+import { AuthModule } from './modules/auth/auth.module.js';
+import { APP_GUARD } from '@nestjs/core';
+import { AuthGuard } from './modules/auth/guards/auth.guard.js';
+import { RolesGuard } from './modules/auth/guards/roles.guard.js';
+import { QrCodesModule } from './modules/qr-codes/qr-codes.module.js';
+import { TimeRecordsModule } from './modules/time-records/time-records.module.js';
+import { GroupsModule } from './modules/groups/groups.module.js';
+import { WorkloadAdjustmentsModule } from './modules/workload-adjustments/workload-adjustments.module.js';
+import { UsersModule } from './modules/users/users.module.js';
+import { HealthModule } from './modules/health/health.module.js';
 
 @Module({
-  imports: [],
-  controllers: [AppController],
-  providers: [AppService],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    PrismaModule,
+    AuthModule,
+    QrCodesModule,
+    TimeRecordsModule,
+    GroupsModule,
+    WorkloadAdjustmentsModule,
+    UsersModule,
+    HealthModule,
+  ],
+  providers: [
+    { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
+  ],
 })
 export class AppModule {}
