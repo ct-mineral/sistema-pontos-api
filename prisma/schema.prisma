@@ -54,6 +54,8 @@ model groups {
   start_time             String?  @db.VarChar(5)
   end_time               String?  @db.VarChar(5)
   status                 Boolean  @default(true)
+  break_start_time String? @db.VarChar(5)
+  break_end_time   String? @db.VarChar(5)
   created_at             DateTime @db.Timestamp(6)
   updated_at             DateTime @db.Timestamp(6)
 

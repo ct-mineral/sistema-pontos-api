@@ -1,10 +1,13 @@
 import { isRefusedExit } from './sequence.js';
+import { clockMinutes, fortalezaDate } from '../../common/clock.js';
 
 export type GroupHours = {
   id: string | null;
   name: string;
   startTime: string | null;
   endTime: string | null;
+  breakStartTime: string | null;
+  breakEndTime: string | null;
   workedMinutes: number;
   expectedMinutes: number | null;
   remainingMinutes?: number | null;
@@ -20,6 +23,8 @@ export type PunchRecord = {
     name: string;
     start_time: string | null;
     end_time: string | null;
+    break_start_time: string | null;
+    break_end_time: string | null;
     daily_workload_minutes: number;
   } | null;
   early_exit_justifications?: { status: string } | null;
@@ -35,6 +40,8 @@ export function plansFrom(
     name: string;
     start_time: string | null;
     end_time: string | null;
+    break_start_time: string | null;
+    break_end_time: string | null;
     daily_workload_minutes: number;
   }[],
   adjustments: {
@@ -57,6 +64,8 @@ export function plansFrom(
           name: 'Ajuste individual',
           startTime: legacy.start_time,
           endTime: legacy.end_time,
+          breakStartTime: null,
+          breakEndTime: null,
           expectedMinutes: legacy.daily_workload_minutes,
         },
       },
@@ -74,34 +83,63 @@ export function plansFrom(
         name: group.name,
         startTime: source?.start_time ?? group.start_time,
         endTime: source?.end_time ?? group.end_time,
+        breakStartTime: group.break_start_time,
+        breakEndTime: group.break_end_time,
         expectedMinutes: source?.daily_workload_minutes ?? group.daily_workload_minutes,
       },
     };
   });
 }
 
-export function workedByGroup(records: PunchRecord[], end: Date) {
+export function workedByGroup(
+  records: PunchRecord[],
+  end: Date,
+  schedules: { key: string; hours: Pick<GroupHours, 'breakStartTime' | 'breakEndTime'> }[] = [],
+) {
   const totals = new Map<string, number>();
-  let open: { at: Date; key: string } | null = null;
-  const add = (key: string, start: Date, finish: Date) => {
-    totals.set(key, (totals.get(key) ?? 0) + elapsedMinutes(start, finish));
+  const scheduleByGroup = new Map(schedules.map((schedule) => [schedule.key, schedule.hours]));
+  let open: {
+    at: Date;
+    key: string;
+    breakStartTime: string | null;
+    breakEndTime: string | null;
+  } | null = null;
+  const add = (
+    key: string,
+    start: Date,
+    finish: Date,
+    schedule?: Pick<GroupHours, 'breakStartTime' | 'breakEndTime'>,
+  ) => {
+    const breakStart = schedule?.breakStartTime;
+    const breakEnd = schedule?.breakEndTime;
+    totals.set(
+      key,
+      (totals.get(key) ?? 0) +
+        elapsedMinutesExcludingBreak(start, finish, breakStart, breakEnd),
+    );
   };
 
   for (const record of records) {
     if (isRefusedExit(record)) continue;
     if (record.type === 'entrada') {
-      open = { at: record.recorded_at, key: groupKey(record.group_id) };
+      const key = groupKey(record.group_id);
+      open = {
+        at: record.recorded_at,
+        key,
+        breakStartTime: scheduleByGroup.get(key)?.breakStartTime ?? record.groups?.break_start_time ?? null,
+        breakEndTime: scheduleByGroup.get(key)?.breakEndTime ?? record.groups?.break_end_time ?? null,
+      };
       continue;
     }
     if (record.type === 'saida' && open) {
-      add(open.key, open.at, record.recorded_at);
+      add(open.key, open.at, record.recorded_at, open);
       open = null;
     }
   }
 
   if (open) {
-    const limit = new Date() < end ? new Date() : end;
-    add(open.key, open.at, limit);
+      const limit = new Date() < end ? new Date() : end;
+    add(open.key, open.at, limit, open);
   }
 
   return totals;
@@ -190,7 +228,7 @@ export function aggregateGroups(
   for (const day of days) {
     for (const group of day.groups) {
       const key = group.id ?? `legacy:${group.name}`;
-      const scheduleKey = `${group.startTime ?? ''}|${group.endTime ?? ''}`;
+      const scheduleKey = `${group.startTime ?? ''}|${group.endTime ?? ''}|${group.breakStartTime ?? ''}|${group.breakEndTime ?? ''}`;
       const current = merged.get(key);
       if (!current) {
         order.push(key);
@@ -208,6 +246,8 @@ export function aggregateGroups(
         current.scheduleVaries = true;
         current.startTime = null;
         current.endTime = null;
+        current.breakStartTime = null;
+        current.breakEndTime = null;
       }
     }
   }
@@ -219,6 +259,8 @@ export function aggregateGroups(
       name: group.name,
       startTime: group.startTime,
       endTime: group.endTime,
+      breakStartTime: group.breakStartTime,
+      breakEndTime: group.breakEndTime,
       workedMinutes: group.workedMinutes,
       expectedMinutes: group.expectedMinutes,
       remainingMinutes:
@@ -292,4 +334,30 @@ export function punchIntervals(
 
 function elapsedMinutes(start: Date, end: Date) {
   return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 60000));
+}
+
+function elapsedMinutesExcludingBreak(
+  start: Date,
+  end: Date,
+  breakStart: string | null | undefined,
+  breakEnd: string | null | undefined,
+) {
+  const worked = elapsedMinutes(start, end);
+  if (!breakStart || !breakEnd) return worked;
+
+  const day = fortalezaDate(start);
+  const breakStartAt = new Date(`${day}T${breakStart}:00-03:00`);
+  const breakEndAt = new Date(`${day}T${breakEnd}:00-03:00`);
+  if (Number.isNaN(breakStartAt.getTime()) || Number.isNaN(breakEndAt.getTime())) {
+    return worked;
+  }
+
+  const startMinutes = clockMinutes(breakStart);
+  const endMinutes = clockMinutes(breakEnd);
+  if (endMinutes <= startMinutes) return worked;
+
+  const overlapStart = Math.max(start.getTime(), breakStartAt.getTime());
+  const overlapEnd = Math.min(end.getTime(), breakEndAt.getTime());
+  const breakMinutes = Math.max(0, Math.floor((overlapEnd - overlapStart) / 60000));
+  return Math.max(0, worked - breakMinutes);
 }

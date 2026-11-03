@@ -8,7 +8,16 @@ export class GroupsController {
 
   @Roles('SERVIDOR')
   @Post('create')
-  create(@Body() body: { name?: string; startTime?: string; endTime?: string }) {
+  create(
+    @Body()
+    body: {
+      name?: string;
+      startTime?: string;
+      endTime?: string;
+      breakStartTime?: string;
+      breakEndTime?: string;
+    },
+  ) {
     return this.groupsService.create(body);
   }
 
@@ -41,7 +50,14 @@ export class GroupsController {
   @Post('update')
   update(
     @Body()
-    body: { id?: string; name?: string; startTime?: string; endTime?: string },
+    body: {
+      id?: string;
+      name?: string;
+      startTime?: string;
+      endTime?: string;
+      breakStartTime?: string;
+      breakEndTime?: string;
+    },
   ) {
     return this.groupsService.update(body);
   }

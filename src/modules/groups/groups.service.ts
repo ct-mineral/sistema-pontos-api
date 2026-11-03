@@ -12,7 +12,13 @@ import { PrismaService } from '../../infra/prisma/prisma.service.js';
 export class GroupsService {
   constructor(private readonly prismaService: PrismaService) {}
 
-  async create(input: { name?: string; startTime?: string; endTime?: string }) {
+  async create(input: {
+    name?: string;
+    startTime?: string;
+    endTime?: string;
+    breakStartTime?: string;
+    breakEndTime?: string;
+  }) {
     const schedule = readSchedule(input);
     const now = new Date();
     const group = await this.prismaService.groups.create({
@@ -22,6 +28,8 @@ export class GroupsService {
         daily_workload_minutes: schedule.dailyWorkloadMinutes,
         start_time: schedule.start.text,
         end_time: schedule.end.text,
+        break_start_time: schedule.breakStart?.text ?? null,
+        break_end_time: schedule.breakEnd?.text ?? null,
         created_at: now,
         updated_at: now,
       },
@@ -35,6 +43,8 @@ export class GroupsService {
     name?: string;
     startTime?: string;
     endTime?: string;
+    breakStartTime?: string;
+    breakEndTime?: string;
   }) {
     if (!input.id) {
       throw new UnprocessableEntityException('Grupo é obrigatório');
@@ -52,6 +62,8 @@ export class GroupsService {
         daily_workload_minutes: schedule.dailyWorkloadMinutes,
         start_time: schedule.start.text,
         end_time: schedule.end.text,
+        break_start_time: schedule.breakStart?.text ?? null,
+        break_end_time: schedule.breakEnd?.text ?? null,
         updated_at: new Date(),
       },
     });
@@ -271,6 +283,8 @@ function readSchedule(input: {
   name?: string;
   startTime?: string;
   endTime?: string;
+  breakStartTime?: string;
+  breakEndTime?: string;
 }) {
   const name = input.name?.trim();
   const start = parseClock(input.startTime);
@@ -281,14 +295,38 @@ function readSchedule(input: {
     );
   }
 
-  const dailyWorkloadMinutes = minutesBetween(start, end);
-  if (dailyWorkloadMinutes === null) {
+  const breakStart = input.breakStartTime ? parseClock(input.breakStartTime) : null;
+  const breakEnd = input.breakEndTime ? parseClock(input.breakEndTime) : null;
+  if (Boolean(input.breakStartTime) !== Boolean(input.breakEndTime) ||
+      (input.breakStartTime && !breakStart) ||
+      (input.breakEndTime && !breakEnd)) {
+    throw new UnprocessableEntityException(
+      'Os horários de início e fim do intervalo devem ser informados corretamente',
+    );
+  }
+
+  const scheduleMinutes = minutesBetween(start, end);
+  if (scheduleMinutes === null) {
     throw new UnprocessableEntityException(
       'A saída precisa ser depois da entrada',
     );
   }
 
-  return { name, start, end, dailyWorkloadMinutes };
+  const breakMinutes = breakStart && breakEnd ? minutesBetween(breakStart, breakEnd) : 0;
+  if (breakStart && breakEnd && (breakMinutes === null || breakStart.text < start.text || breakEnd.text > end.text)) {
+    throw new UnprocessableEntityException(
+      'O intervalo precisa estar entre a entrada e a saída',
+    );
+  }
+
+  const dailyWorkloadMinutes = scheduleMinutes - (breakMinutes ?? 0);
+  if (dailyWorkloadMinutes <= 0) {
+    throw new UnprocessableEntityException(
+      'A carga diária precisa ser maior que zero',
+    );
+  }
+
+  return { name, start, end, breakStart, breakEnd, dailyWorkloadMinutes };
 }
 
 type Shift = 'manha' | 'tarde' | 'noite';
@@ -335,6 +373,8 @@ function toGroup(
     daily_workload_minutes: number;
     start_time: string | null;
     end_time: string | null;
+    break_start_time: string | null;
+    break_end_time: string | null;
     status: boolean;
     created_at: Date;
     updated_at: Date;
@@ -347,6 +387,8 @@ function toGroup(
     dailyWorkloadMinutes: group.daily_workload_minutes,
     startTime: group.start_time,
     endTime: group.end_time,
+    breakStartTime: group.break_start_time,
+    breakEndTime: group.break_end_time,
     status: group.status,
     members: people.length,
     people,

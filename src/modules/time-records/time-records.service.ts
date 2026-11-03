@@ -405,6 +405,8 @@ export class TimeRecordsService {
             name: true,
             start_time: true,
             end_time: true,
+            break_start_time: true,
+            break_end_time: true,
             daily_workload_minutes: true,
           },
         },
@@ -484,10 +486,11 @@ export class TimeRecordsService {
       userId,
       day,
     );
-    const worked = workedByGroup(records, end);
+    const plans = plansFrom(memberships, adjustments);
+    const worked = workedByGroup(records, end, plans);
     const lines = new Map<string, GroupHours>();
 
-    for (const plan of plansFrom(memberships, adjustments)) {
+    for (const plan of plans) {
       lines.set(plan.key, {
         ...plan.hours,
         workedMinutes: worked.get(plan.key) ?? 0,
@@ -506,6 +509,8 @@ export class TimeRecordsService {
         name: sample?.name ?? (key ? 'Grupo' : 'Sem grupo'),
         startTime: adjustment?.start_time ?? sample?.start_time ?? null,
         endTime: adjustment?.end_time ?? sample?.end_time ?? null,
+        breakStartTime: sample?.break_start_time ?? null,
+        breakEndTime: sample?.break_end_time ?? null,
         workedMinutes: minutes,
         expectedMinutes,
         scheduleVaries: false,
