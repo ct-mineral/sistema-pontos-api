@@ -75,9 +75,6 @@ export class TimeRecordsService {
     const groupId =
       type === 'saida' ? (last?.group_id ?? null) : await this.resolveEntryGroup(userId, input.groupId);
 
-    const scheduledEnd = type === 'saida' ? await this.scheduledEndFor(userId, groupId, now) : null;
-    const early = Boolean(scheduledEnd && clock < scheduledEnd);
-
     const created = await this.prismaService.$transaction(async (tx) => {
       const record = await tx.time_records.create({
         data: {
@@ -90,25 +87,33 @@ export class TimeRecordsService {
           created_at: now,
         },
       });
-      const justification =
-        early && scheduledEnd
-          ? await tx.early_exit_justifications.create({
-              data: {
-                id: randomUUID(),
-                time_record_id: record.id,
-                user_id: userId,
-                scheduled_end: scheduledEnd,
-                created_at: now,
-                updated_at: now,
-              },
-            })
-          : null;
-      return { record, justification };
+      return record;
     });
+
+    const scheduledEnd = type === 'saida'
+      ? await this.scheduledEndFor(userId, groupId, created.recorded_at)
+      : null;
+    const missingMinutes = type === 'saida'
+      ? await this.missingMinutesForExit(userId, groupId, created.recorded_at)
+      : null;
+    const justification =
+      scheduledEnd && missingMinutes && missingMinutes > 0
+        ? await this.prismaService.early_exit_justifications.create({
+            data: {
+              id: randomUUID(),
+              time_record_id: created.id,
+              user_id: userId,
+              scheduled_end: scheduledEnd,
+              missing_minutes: missingMinutes,
+              created_at: now,
+              updated_at: now,
+            },
+          })
+        : null;
 
     const entry =
       type === 'saida'
-        ? await this.previousEntry(userId, created.record.recorded_at)
+        ? await this.previousEntry(userId, created.recorded_at)
         : null;
     const group = groupId
       ? await this.prismaService.groups.findUnique({
@@ -116,7 +121,7 @@ export class TimeRecordsService {
           select: { id: true, name: true },
         })
       : null;
-    return toRecord(created.record, qrCode, entry, group, created.justification);
+    return toRecord(created, qrCode, entry, group, justification);
   }
 
   async groupOptions(userId: string) {
@@ -224,6 +229,13 @@ export class TimeRecordsService {
       throw new UnprocessableEntityException('Entrada da saída não encontrada');
     }
 
+    const scheduledEnd = await this.scheduledEndFor(userId, exit.group_id, exit.recorded_at);
+    if (scheduledEnd && fortalezaClock(exit.recorded_at) < scheduledEnd) {
+      throw new UnprocessableEntityException(
+        `A atividade só pode ser informada ao final do turno, às ${scheduledEnd}`,
+      );
+    }
+
     const updated = await this.prismaService.time_records.update({
       where: { id: exit.id },
       data: { activity: description },
@@ -261,6 +273,7 @@ export class TimeRecordsService {
       id: updated.id,
       exitId: updated.time_record_id,
       scheduledEnd: updated.scheduled_end,
+      missingMinutes: updated.missing_minutes,
       reason: updated.reason,
       status: updated.status,
     };
@@ -362,6 +375,17 @@ export class TimeRecordsService {
     );
     const plan = plansFrom(listed, adjustments).find((item) => item.key === group.id);
     return plan?.hours.endTime ?? group.end_time;
+  }
+
+  private async missingMinutesForExit(
+    userId: string,
+    groupId: string | null,
+    at: Date,
+  ) {
+    const summary = await this.summary(userId, fortalezaDate(at));
+    const line = summary.groups.find((group) => group.id === groupId) ?? null;
+    if (!line || line.expectedMinutes === null) return null;
+    return Math.max(0, line.expectedMinutes - line.workedMinutes);
   }
 
   private async recentRecords(userId: string) {

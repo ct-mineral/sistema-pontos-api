@@ -32,6 +32,7 @@ export function toRecord(
   group?: { id: string; name: string } | null,
   justification?: {
     scheduled_end: string;
+    missing_minutes?: number | null;
     reason: string | null;
     status: 'PENDENTE' | 'APROVADA' | 'APROVADA_PARCIAL' | 'RECUSADA';
     makeup_date?: Date | null;
@@ -54,6 +55,7 @@ export function toRecord(
     earlyExit: justification
       ? {
           scheduledEnd: justification.scheduled_end,
+          missingMinutes: justification.missing_minutes ?? null,
           reason: justification.reason,
           status: justification.status,
           makeupDate: dateOnly(justification.makeup_date ?? null),

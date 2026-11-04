@@ -108,6 +108,7 @@ model early_exit_justifications {
   user_id        String               @db.Uuid
   reason         String?              @db.VarChar(500)
   scheduled_end  String               @db.VarChar(5)
+  missing_minutes Int?
   status         JustificationStatus  @default(PENDENTE)
   makeup_date    DateTime?            @db.Date
   makeup_start   String?              @db.VarChar(5)

@@ -22,6 +22,7 @@ export function isReviewStatus(value?: string): value is ReviewStatus {
 export function toJustification(row: {
   id: string;
   scheduled_end: string;
+  missing_minutes: number | null;
   reason: string | null;
   status: 'PENDENTE' | 'APROVADA' | 'APROVADA_PARCIAL' | 'RECUSADA';
   makeup_date: Date | null;
@@ -40,6 +41,7 @@ export function toJustification(row: {
     groupName: row.time_records.groups?.name ?? null,
     recordedAt: row.time_records.recorded_at,
     scheduledEnd: row.scheduled_end,
+    missingMinutes: row.missing_minutes,
     reason: row.reason,
     status: row.status,
     makeupDate: dateOnly(row.makeup_date),
@@ -51,7 +53,11 @@ export function toJustification(row: {
 }
 
 export function makeupWindow(
-  item: { scheduled_end: string; time_records: { recorded_at: Date } },
+  item: {
+    scheduled_end: string;
+    missing_minutes: number | null;
+    time_records: { recorded_at: Date };
+  },
   makeupDate?: string,
   makeupStart?: string,
 ) {
@@ -66,7 +72,8 @@ export function makeupWindow(
   }
 
   const exitClock = fortalezaClock(item.time_records.recorded_at);
-  const gap = clockMinutes(item.scheduled_end) - clockMinutes(exitClock);
+  const gap = item.missing_minutes ??
+    (clockMinutes(item.scheduled_end) - clockMinutes(exitClock));
   if (gap <= 0) {
     throw new UnprocessableEntityException('Não há horas restantes para acertar');
   }
