@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { Express } from 'express';
-import { clockContains, fortalezaClock, fortalezaDate } from '../../common/clock.js';
+import {
+  clockContains,
+  fortalezaClock,
+  fortalezaDate,
+} from '../../common/clock.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 import { QrCodesService } from '../qr-codes/qr-codes.service.js';
 import { allowanceInclude, safeFileName, toAllowance } from './allowance.js';
@@ -47,7 +51,10 @@ export class TimeRecordsService {
     private readonly workloadAdjustmentsService: WorkloadAdjustmentsService,
   ) {}
 
-  async create(userId: string, input: { code?: string; type?: string; groupId?: string }) {
+  async create(
+    userId: string,
+    input: { code?: string; type?: string; groupId?: string },
+  ) {
     const code = input.code?.trim();
     const type = input.type;
     if (!code || !type || !isRecordType(type)) {
@@ -73,7 +80,9 @@ export class TimeRecordsService {
     }
 
     const groupId =
-      type === 'saida' ? (last?.group_id ?? null) : await this.resolveEntryGroup(userId, input.groupId);
+      type === 'saida'
+        ? (last?.group_id ?? null)
+        : await this.resolveEntryGroup(userId, input.groupId);
 
     const created = await this.prismaService.$transaction(async (tx) => {
       const record = await tx.time_records.create({
@@ -90,12 +99,14 @@ export class TimeRecordsService {
       return record;
     });
 
-    const scheduledEnd = type === 'saida'
-      ? await this.scheduledEndFor(userId, groupId, created.recorded_at)
-      : null;
-    const missingMinutes = type === 'saida'
-      ? await this.missingMinutesForExit(userId, groupId, created.recorded_at)
-      : null;
+    const scheduledEnd =
+      type === 'saida'
+        ? await this.scheduledEndFor(userId, groupId, created.recorded_at)
+        : null;
+    const missingMinutes =
+      type === 'saida'
+        ? await this.missingMinutesForExit(userId, groupId, created.recorded_at)
+        : null;
     const justification =
       scheduledEnd && missingMinutes && missingMinutes > 0
         ? await this.prismaService.early_exit_justifications.create({
@@ -197,7 +208,9 @@ export class TimeRecordsService {
       throw new UnprocessableEntityException('Informe o grupo da batida');
     }
     if (matching.length === 0) {
-      throw new UnprocessableEntityException(entryWindowMessage(options.groups));
+      throw new UnprocessableEntityException(
+        entryWindowMessage(options.groups),
+      );
     }
     return matching[0].id;
   }
@@ -209,7 +222,9 @@ export class TimeRecordsService {
     const exitId = input.exitId?.trim();
     const description = input.description?.trim();
     if (!exitId || !description) {
-      throw new UnprocessableEntityException('Saída e atividade são obrigatórias');
+      throw new UnprocessableEntityException(
+        'Saída e atividade são obrigatórias',
+      );
     }
     if (description.length > 500) {
       throw new UnprocessableEntityException(
@@ -229,7 +244,11 @@ export class TimeRecordsService {
       throw new UnprocessableEntityException('Entrada da saída não encontrada');
     }
 
-    const scheduledEnd = await this.scheduledEndFor(userId, exit.group_id, exit.recorded_at);
+    const scheduledEnd = await this.scheduledEndFor(
+      userId,
+      exit.group_id,
+      exit.recorded_at,
+    );
     if (scheduledEnd && fortalezaClock(exit.recorded_at) < scheduledEnd) {
       throw new UnprocessableEntityException(
         `A atividade só pode ser informada ao final do turno, às ${scheduledEnd}`,
@@ -245,24 +264,33 @@ export class TimeRecordsService {
     return toRecord(updated, updated.qr_codes, entry, updated.groups);
   }
 
-  async saveReason(userId: string, input: { exitId?: string; reason?: string }) {
+  async saveReason(
+    userId: string,
+    input: { exitId?: string; reason?: string },
+  ) {
     const exitId = input.exitId?.trim();
     const reason = input.reason?.trim();
     if (!exitId || !reason) {
       throw new UnprocessableEntityException('Saída e motivo são obrigatórios');
     }
     if (reason.length > 500) {
-      throw new UnprocessableEntityException('O motivo pode ter no máximo 500 caracteres');
+      throw new UnprocessableEntityException(
+        'O motivo pode ter no máximo 500 caracteres',
+      );
     }
 
     const item = await this.prismaService.early_exit_justifications.findFirst({
       where: { time_record_id: exitId, user_id: userId },
     });
     if (!item) {
-      throw new UnprocessableEntityException('Esta saída não precisa de justificativa');
+      throw new UnprocessableEntityException(
+        'Esta saída não precisa de justificativa',
+      );
     }
     if (item.status !== 'PENDENTE') {
-      throw new UnprocessableEntityException('A justificativa já foi analisada');
+      throw new UnprocessableEntityException(
+        'A justificativa já foi analisada',
+      );
     }
 
     const updated = await this.prismaService.early_exit_justifications.update({
@@ -290,11 +318,18 @@ export class TimeRecordsService {
 
   async review(
     reviewerId: string,
-    input: { id?: string; status?: string; makeupDate?: string; makeupStart?: string },
+    input: {
+      id?: string;
+      status?: string;
+      makeupDate?: string;
+      makeupStart?: string;
+    },
   ) {
     const id = input.id?.trim();
     if (!id || !isReviewStatus(input.status)) {
-      throw new UnprocessableEntityException('Justificativa e decisão são obrigatórias');
+      throw new UnprocessableEntityException(
+        'Justificativa e decisão são obrigatórias',
+      );
     }
 
     const item = await this.prismaService.early_exit_justifications.findUnique({
@@ -303,17 +338,25 @@ export class TimeRecordsService {
     });
     if (!item) throw new NotFoundException('Justificativa não encontrada');
     if (item.user_id === reviewerId) {
-      throw new ConflictException('Não é possível analisar a própria justificativa');
+      throw new ConflictException(
+        'Não é possível analisar a própria justificativa',
+      );
     }
     if (!item.reason?.trim()) {
-      throw new UnprocessableEntityException('O motivo ainda não foi informado');
+      throw new UnprocessableEntityException(
+        'O motivo ainda não foi informado',
+      );
     }
     if (item.status !== 'PENDENTE') {
-      throw new UnprocessableEntityException('A justificativa já foi analisada');
+      throw new UnprocessableEntityException(
+        'A justificativa já foi analisada',
+      );
     }
 
     const makeup =
-      input.status === 'APROVADA_PARCIAL' ? makeupWindow(item, input.makeupDate, input.makeupStart) : null;
+      input.status === 'APROVADA_PARCIAL'
+        ? makeupWindow(item, input.makeupDate, input.makeupStart)
+        : null;
     if (input.status === 'RECUSADA') assertCanRefuse(item);
 
     const now = new Date();
@@ -357,7 +400,11 @@ export class TimeRecordsService {
     });
   }
 
-  private async scheduledEndFor(userId: string, groupId: string | null, at: Date) {
+  private async scheduledEndFor(
+    userId: string,
+    groupId: string | null,
+    at: Date,
+  ) {
     if (!groupId) return null;
     const group = await this.prismaService.groups.findUnique({
       where: { id: groupId },
@@ -373,7 +420,9 @@ export class TimeRecordsService {
       userId,
       day.utcDay,
     );
-    const plan = plansFrom(listed, adjustments).find((item) => item.key === group.id);
+    const plan = plansFrom(listed, adjustments).find(
+      (item) => item.key === group.id,
+    );
     return plan?.hours.endTime ?? group.end_time;
   }
 
@@ -393,8 +442,12 @@ export class TimeRecordsService {
       where: { user_id: userId },
       orderBy: { recorded_at: 'desc' },
       include: {
-        groups: { select: { id: true, name: true, start_time: true, end_time: true } },
-        early_exit_justifications: { select: { status: true, scheduled_end: true } },
+        groups: {
+          select: { id: true, name: true, start_time: true, end_time: true },
+        },
+        early_exit_justifications: {
+          select: { status: true, scheduled_end: true },
+        },
       },
       take: 30,
     });
@@ -447,7 +500,10 @@ export class TimeRecordsService {
       orderBy: { created_at: 'asc' },
     });
     const groups = creditAllowances(
-      creditApproved(await this.dayGroups(userId, day.utcDay, records, day.end), records),
+      creditApproved(
+        await this.dayGroups(userId, day.utcDay, records, day.end),
+        records,
+      ),
       allowances,
     );
     const totals = totalsOf(groups);
@@ -524,10 +580,16 @@ export class TimeRecordsService {
 
     for (const [key, minutes] of worked) {
       if (lines.has(key)) continue;
-      const sample = records.find((record) => groupKey(record.group_id) === key)?.groups;
-      const adjustment = adjustments.find((item) => groupKey(item.group_id) === key);
+      const sample = records.find(
+        (record) => groupKey(record.group_id) === key,
+      )?.groups;
+      const adjustment = adjustments.find(
+        (item) => groupKey(item.group_id) === key,
+      );
       const expectedMinutes =
-        adjustment?.daily_workload_minutes ?? sample?.daily_workload_minutes ?? null;
+        adjustment?.daily_workload_minutes ??
+        sample?.daily_workload_minutes ??
+        null;
       lines.set(key, {
         id: key ? key : null,
         name: sample?.name ?? (key ? 'Grupo' : 'Sem grupo'),
@@ -545,7 +607,9 @@ export class TimeRecordsService {
       .map((line) => ({
         ...line,
         remainingMinutes:
-          line.expectedMinutes === null ? null : line.expectedMinutes - line.workedMinutes,
+          line.expectedMinutes === null
+            ? null
+            : line.expectedMinutes - line.workedMinutes,
       }))
       .sort((left, right) => left.name.localeCompare(right.name, 'pt-BR'));
   }
@@ -627,13 +691,19 @@ export class TimeRecordsService {
     const reason = input.reason?.trim();
     const day = resolveDay(input.date);
     if (!groupId || !reason) {
-      throw new UnprocessableEntityException('Grupo, dia e motivo são obrigatórios');
+      throw new UnprocessableEntityException(
+        'Grupo, dia e motivo são obrigatórios',
+      );
     }
     if (reason.length > 500) {
-      throw new UnprocessableEntityException('O motivo pode ter no máximo 500 caracteres');
+      throw new UnprocessableEntityException(
+        'O motivo pode ter no máximo 500 caracteres',
+      );
     }
     if (day.date > fortalezaDate(new Date())) {
-      throw new UnprocessableEntityException('O abono não pode ser pedido para um dia futuro');
+      throw new UnprocessableEntityException(
+        'O abono não pode ser pedido para um dia futuro',
+      );
     }
 
     const membership = await this.prismaService.users_groups.findFirst({
@@ -642,10 +712,17 @@ export class TimeRecordsService {
     if (!membership) throw new UnprocessableEntityException('Grupo inválido');
 
     const pending = await this.prismaService.time_allowances.findFirst({
-      where: { user_id: userId, group_id: groupId, day: day.utcDay, status: 'PENDENTE' },
+      where: {
+        user_id: userId,
+        group_id: groupId,
+        day: day.utcDay,
+        status: 'PENDENTE',
+      },
     });
     if (pending) {
-      throw new UnprocessableEntityException('Já existe um abono pendente neste dia e grupo');
+      throw new UnprocessableEntityException(
+        'Já existe um abono pendente neste dia e grupo',
+      );
     }
 
     const records = await this.prismaService.time_records.findMany({
@@ -654,13 +731,17 @@ export class TimeRecordsService {
       orderBy: { recorded_at: 'asc' },
     });
     if (hasOpenGroupEntry(records, groupId)) {
-      throw new UnprocessableEntityException('A entrada deste grupo ainda está aberta');
+      throw new UnprocessableEntityException(
+        'A entrada deste grupo ainda está aberta',
+      );
     }
 
     const summary = await this.summary(userId, day.date);
     const line = summary.groups.find((group) => group.id === groupId);
     const missing =
-      line?.expectedMinutes == null ? null : line.expectedMinutes - line.workedMinutes;
+      line?.expectedMinutes == null
+        ? null
+        : line.expectedMinutes - line.workedMinutes;
     if (missing == null || missing <= 0) {
       throw new UnprocessableEntityException('Não há horas em falta neste dia');
     }
@@ -733,9 +814,13 @@ export class TimeRecordsService {
   ) {
     const id = input.id?.trim();
     if (!id || (input.status !== 'APROVADO' && input.status !== 'RECUSADO')) {
-      throw new UnprocessableEntityException('Abono e decisão são obrigatórios');
+      throw new UnprocessableEntityException(
+        'Abono e decisão são obrigatórios',
+      );
     }
-    const item = await this.prismaService.time_allowances.findUnique({ where: { id } });
+    const item = await this.prismaService.time_allowances.findUnique({
+      where: { id },
+    });
     if (!item) throw new NotFoundException('Abono não encontrado');
     if (item.user_id === reviewerId) {
       throw new ConflictException('Não é possível analisar o próprio abono');
@@ -764,7 +849,11 @@ function entryWindowMessage(
     | { startTime: string | null; endTime: string | null }
     | { startTime: string | null; endTime: string | null }[],
 ) {
-  const only = Array.isArray(group) ? (group.length === 1 ? group[0] : null) : group;
+  const only = Array.isArray(group)
+    ? group.length === 1
+      ? group[0]
+      : null
+    : group;
   if (only?.startTime && only.endTime) {
     return `A entrada só pode ser registrada entre ${only.startTime} e ${only.endTime}`;
   }
@@ -774,4 +863,3 @@ function entryWindowMessage(
 function isRecordType(value: string): value is TimeRecordType {
   return (RECORD_TYPES as readonly string[]).includes(value);
 }
-

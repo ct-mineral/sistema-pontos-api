@@ -85,7 +85,8 @@ export function plansFrom(
         endTime: source?.end_time ?? group.end_time,
         breakStartTime: group.break_start_time,
         breakEndTime: group.break_end_time,
-        expectedMinutes: source?.daily_workload_minutes ?? group.daily_workload_minutes,
+        expectedMinutes:
+          source?.daily_workload_minutes ?? group.daily_workload_minutes,
       },
     };
   });
@@ -94,10 +95,15 @@ export function plansFrom(
 export function workedByGroup(
   records: PunchRecord[],
   end: Date,
-  schedules: { key: string; hours: Pick<GroupHours, 'breakStartTime' | 'breakEndTime'> }[] = [],
+  schedules: {
+    key: string;
+    hours: Pick<GroupHours, 'breakStartTime' | 'breakEndTime'>;
+  }[] = [],
 ) {
   const totals = new Map<string, number>();
-  const scheduleByGroup = new Map(schedules.map((schedule) => [schedule.key, schedule.hours]));
+  const scheduleByGroup = new Map(
+    schedules.map((schedule) => [schedule.key, schedule.hours]),
+  );
   let open: {
     at: Date;
     key: string;
@@ -126,8 +132,14 @@ export function workedByGroup(
       open = {
         at: record.recorded_at,
         key,
-        breakStartTime: scheduleByGroup.get(key)?.breakStartTime ?? record.groups?.break_start_time ?? null,
-        breakEndTime: scheduleByGroup.get(key)?.breakEndTime ?? record.groups?.break_end_time ?? null,
+        breakStartTime:
+          scheduleByGroup.get(key)?.breakStartTime ??
+          record.groups?.break_start_time ??
+          null,
+        breakEndTime:
+          scheduleByGroup.get(key)?.breakEndTime ??
+          record.groups?.break_end_time ??
+          null,
       };
       continue;
     }
@@ -138,7 +150,7 @@ export function workedByGroup(
   }
 
   if (open) {
-      const limit = new Date() < end ? new Date() : end;
+    const limit = new Date() < end ? new Date() : end;
     add(open.key, open.at, limit, open);
   }
 
@@ -169,7 +181,11 @@ export function creditAllowances(
 }
 
 export function hasOpenGroupEntry(
-  records: { type: string; group_id: string | null; early_exit_justifications?: { status: string } | null }[],
+  records: {
+    type: string;
+    group_id: string | null;
+    early_exit_justifications?: { status: string } | null;
+  }[],
   groupId: string,
 ) {
   let open = false;
@@ -189,12 +205,14 @@ export function creditApproved(
     records
       .filter(
         (record) =>
-          record.type === 'saida' && record.early_exit_justifications?.status === 'APROVADA',
+          record.type === 'saida' &&
+          record.early_exit_justifications?.status === 'APROVADA',
       )
       .map((record) => groupKey(record.group_id)),
   );
   return groups.map((line) => {
-    if (!approved.has(groupKey(line.id)) || line.expectedMinutes === null) return line;
+    if (!approved.has(groupKey(line.id)) || line.expectedMinutes === null)
+      return line;
     const workedMinutes = Math.max(line.workedMinutes, line.expectedMinutes);
     return {
       ...line,
@@ -204,13 +222,20 @@ export function creditApproved(
   });
 }
 
-export function totalsOf(groups: { workedMinutes: number; expectedMinutes: number | null }[]) {
+export function totalsOf(
+  groups: { workedMinutes: number; expectedMinutes: number | null }[],
+) {
   const known = groups
     .map((group) => group.expectedMinutes)
     .filter((value): value is number => value !== null);
-  const workedMinutes = groups.reduce((total, group) => total + group.workedMinutes, 0);
+  const workedMinutes = groups.reduce(
+    (total, group) => total + group.workedMinutes,
+    0,
+  );
   const expectedMinutes =
-    known.length === 0 ? null : known.reduce((total, value) => total + value, 0);
+    known.length === 0
+      ? null
+      : known.reduce((total, value) => total + value, 0);
   return {
     workedMinutes,
     expectedMinutes,
@@ -348,7 +373,10 @@ function elapsedMinutesExcludingBreak(
   const day = fortalezaDate(start);
   const breakStartAt = new Date(`${day}T${breakStart}:00-03:00`);
   const breakEndAt = new Date(`${day}T${breakEnd}:00-03:00`);
-  if (Number.isNaN(breakStartAt.getTime()) || Number.isNaN(breakEndAt.getTime())) {
+  if (
+    Number.isNaN(breakStartAt.getTime()) ||
+    Number.isNaN(breakEndAt.getTime())
+  ) {
     return worked;
   }
 
@@ -358,6 +386,9 @@ function elapsedMinutesExcludingBreak(
 
   const overlapStart = Math.max(start.getTime(), breakStartAt.getTime());
   const overlapEnd = Math.min(end.getTime(), breakEndAt.getTime());
-  const breakMinutes = Math.max(0, Math.floor((overlapEnd - overlapStart) / 60000));
+  const breakMinutes = Math.max(
+    0,
+    Math.floor((overlapEnd - overlapStart) / 60000),
+  );
   return Math.max(0, worked - breakMinutes);
 }

@@ -1,15 +1,23 @@
 import { dateOnly } from './day.js';
 
 export function isRefusedExit(
-  record?: { type: string; early_exit_justifications?: { status: string } | null } | null,
+  record?: {
+    type: string;
+    early_exit_justifications?: { status: string } | null;
+  } | null,
 ) {
-  return record?.type === 'saida' && record.early_exit_justifications?.status === 'RECUSADA';
+  return (
+    record?.type === 'saida' &&
+    record.early_exit_justifications?.status === 'RECUSADA'
+  );
 }
 
-export function entryBefore<T extends { type: string; early_exit_justifications?: { status: string } | null }>(
-  records: T[],
-  index: number,
-) {
+export function entryBefore<
+  T extends {
+    type: string;
+    early_exit_justifications?: { status: string } | null;
+  },
+>(records: T[], index: number) {
   if (records[index]?.type !== 'saida') return null;
   for (let cursor = index + 1; cursor < records.length; cursor += 1) {
     const candidate = records[cursor];

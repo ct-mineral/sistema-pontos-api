@@ -100,7 +100,9 @@ export class GroupsService {
     if (!current) throw new NotFoundException('Grupo não encontrado');
 
     const [punches, adjustments] = await Promise.all([
-      this.prismaService.time_records.count({ where: { group_id: current.id } }),
+      this.prismaService.time_records.count({
+        where: { group_id: current.id },
+      }),
       this.prismaService.workload_adjustments.count({
         where: { group_id: current.id },
       }),
@@ -196,9 +198,12 @@ export class GroupsService {
     const membership = await this.prismaService.users_groups.findFirst({
       where: { user_id: user.id, group_id: input.groupId },
     });
-    if (!membership) throw new NotFoundException('Usuário não está nesse grupo');
+    if (!membership)
+      throw new NotFoundException('Usuário não está nesse grupo');
 
-    await this.prismaService.users_groups.delete({ where: { id: membership.id } });
+    await this.prismaService.users_groups.delete({
+      where: { id: membership.id },
+    });
     return { id: membership.id, userId: user.id, groupId: input.groupId };
   }
 
@@ -228,7 +233,10 @@ export class GroupsService {
     };
   }
 
-  private async activeUserAndGroup(input: { suapEnrollment?: string; groupId?: string }) {
+  private async activeUserAndGroup(input: {
+    suapEnrollment?: string;
+    groupId?: string;
+  }) {
     const suapEnrollment = input.suapEnrollment?.trim();
     if (!suapEnrollment || !input.groupId) {
       throw new UnprocessableEntityException(
@@ -295,11 +303,15 @@ function readSchedule(input: {
     );
   }
 
-  const breakStart = input.breakStartTime ? parseClock(input.breakStartTime) : null;
+  const breakStart = input.breakStartTime
+    ? parseClock(input.breakStartTime)
+    : null;
   const breakEnd = input.breakEndTime ? parseClock(input.breakEndTime) : null;
-  if (Boolean(input.breakStartTime) !== Boolean(input.breakEndTime) ||
-      (input.breakStartTime && !breakStart) ||
-      (input.breakEndTime && !breakEnd)) {
+  if (
+    Boolean(input.breakStartTime) !== Boolean(input.breakEndTime) ||
+    (input.breakStartTime && !breakStart) ||
+    (input.breakEndTime && !breakEnd)
+  ) {
     throw new UnprocessableEntityException(
       'Os horários de início e fim do intervalo devem ser informados corretamente',
     );
@@ -312,8 +324,15 @@ function readSchedule(input: {
     );
   }
 
-  const breakMinutes = breakStart && breakEnd ? minutesBetween(breakStart, breakEnd) : 0;
-  if (breakStart && breakEnd && (breakMinutes === null || breakStart.text < start.text || breakEnd.text > end.text)) {
+  const breakMinutes =
+    breakStart && breakEnd ? minutesBetween(breakStart, breakEnd) : 0;
+  if (
+    breakStart &&
+    breakEnd &&
+    (breakMinutes === null ||
+      breakStart.text < start.text ||
+      breakEnd.text > end.text)
+  ) {
     throw new UnprocessableEntityException(
       'O intervalo precisa estar entre a entrada e a saída',
     );
@@ -348,7 +367,11 @@ type GroupPerson = {
 
 function toPeople(
   links: {
-    users: { suap_enrollment: string; name: string | null; role: GroupPerson['role'] };
+    users: {
+      suap_enrollment: string;
+      name: string | null;
+      role: GroupPerson['role'];
+    };
   }[],
 ): GroupPerson[] {
   return links

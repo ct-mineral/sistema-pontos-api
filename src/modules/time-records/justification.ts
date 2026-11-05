@@ -1,5 +1,11 @@
 import { UnprocessableEntityException } from '@nestjs/common';
-import { clockMinutes, fortalezaClock, fortalezaDate, minutesToClock, parseClock } from '../../common/clock.js';
+import {
+  clockMinutes,
+  fortalezaClock,
+  fortalezaDate,
+  minutesToClock,
+  parseClock,
+} from '../../common/clock.js';
 import { dateOnly, parseUtcDate } from './day.js';
 
 export const justificationInclude = {
@@ -16,7 +22,9 @@ export const justificationInclude = {
 type ReviewStatus = 'APROVADA' | 'APROVADA_PARCIAL' | 'RECUSADA';
 
 export function isReviewStatus(value?: string): value is ReviewStatus {
-  return value === 'APROVADA' || value === 'APROVADA_PARCIAL' || value === 'RECUSADA';
+  return (
+    value === 'APROVADA' || value === 'APROVADA_PARCIAL' || value === 'RECUSADA'
+  );
 }
 
 export function toJustification(row: {
@@ -65,21 +73,30 @@ export function makeupWindow(
   const start = parseClock(makeupStart?.trim().slice(0, 5));
   const punchDay = fortalezaDate(item.time_records.recorded_at);
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !start) {
-    throw new UnprocessableEntityException('Data e horário do acerto são obrigatórios');
+    throw new UnprocessableEntityException(
+      'Data e horário do acerto são obrigatórios',
+    );
   }
   if (date <= punchDay) {
-    throw new UnprocessableEntityException('A data do acerto precisa ser posterior à saída');
+    throw new UnprocessableEntityException(
+      'A data do acerto precisa ser posterior à saída',
+    );
   }
 
   const exitClock = fortalezaClock(item.time_records.recorded_at);
-  const gap = item.missing_minutes ??
-    (clockMinutes(item.scheduled_end) - clockMinutes(exitClock));
+  const gap =
+    item.missing_minutes ??
+    clockMinutes(item.scheduled_end) - clockMinutes(exitClock);
   if (gap <= 0) {
-    throw new UnprocessableEntityException('Não há horas restantes para acertar');
+    throw new UnprocessableEntityException(
+      'Não há horas restantes para acertar',
+    );
   }
   const end = start.hours * 60 + start.minutes + gap;
   if (end >= 24 * 60) {
-    throw new UnprocessableEntityException('O horário de início precisa deixar o acerto no mesmo dia');
+    throw new UnprocessableEntityException(
+      'O horário de início precisa deixar o acerto no mesmo dia',
+    );
   }
 
   return {
@@ -89,7 +106,10 @@ export function makeupWindow(
   };
 }
 
-export function assertCanRefuse(item: { scheduled_end: string; time_records: { recorded_at: Date } }) {
+export function assertCanRefuse(item: {
+  scheduled_end: string;
+  time_records: { recorded_at: Date };
+}) {
   const punchDay = fortalezaDate(item.time_records.recorded_at);
   const today = fortalezaDate(new Date());
   if (punchDay !== today || fortalezaClock() >= item.scheduled_end) {

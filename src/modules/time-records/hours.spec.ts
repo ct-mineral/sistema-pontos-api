@@ -24,9 +24,9 @@ describe('workedByGroup', () => {
       record('saida', '2026-11-03T20:00:00.000Z'),
     ];
 
-    expect(workedByGroup(records, new Date('2026-11-03T23:59:00.000Z'), schedule)).toEqual(
-      new Map([['group-1', 480]]),
-    );
+    expect(
+      workedByGroup(records, new Date('2026-11-03T23:59:00.000Z'), schedule),
+    ).toEqual(new Map([['group-1', 480]]));
   });
 
   it('não desconta duas vezes quando o intervalo já foi registrado', () => {
@@ -37,8 +37,8 @@ describe('workedByGroup', () => {
       record('saida', '2026-11-03T20:00:00.000Z'),
     ];
 
-    expect(workedByGroup(records, new Date('2026-11-03T23:59:00.000Z'), schedule)).toEqual(
-      new Map([['group-1', 480]]),
-    );
+    expect(
+      workedByGroup(records, new Date('2026-11-03T23:59:00.000Z'), schedule),
+    ).toEqual(new Map([['group-1', 480]]));
   });
 });
