@@ -15,8 +15,7 @@ export class WorkloadAdjustmentsController {
     body: {
       suapEnrollment?: string;
       groupId?: string;
-      startTime?: string;
-      endTime?: string;
+      dailyWorkloadMinutes?: number;
       startDate?: string;
       endDate?: string;
     },
@@ -32,8 +31,7 @@ export class WorkloadAdjustmentsController {
       id?: string;
       suapEnrollment?: string;
       groupId?: string;
-      startTime?: string;
-      endTime?: string;
+      dailyWorkloadMinutes?: number;
       startDate?: string;
       endDate?: string;
     },

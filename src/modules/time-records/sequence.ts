@@ -27,6 +27,14 @@ export function entryBefore<
   return null;
 }
 
+export function nextRecordTypes(lastType?: string | null) {
+  if (!lastType) return ['entrada'] as const;
+  if (lastType === 'entrada') return ['pausa', 'saida'] as const;
+  if (lastType === 'pausa') return ['retorno'] as const;
+  if (lastType === 'retorno') return ['pausa', 'saida'] as const;
+  return ['entrada'] as const;
+}
+
 export function toRecord(
   record: {
     id: string;

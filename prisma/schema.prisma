@@ -51,12 +51,7 @@ model groups {
   id                     String   @id @db.Uuid
   name                   String   @db.VarChar(100)
   daily_workload_minutes Int
-  start_time             String?  @db.VarChar(5)
-  end_time               String?  @db.VarChar(5)
   status                 Boolean  @default(true)
-  break_start_time String? @db.VarChar(5)
-  break_end_time   String? @db.VarChar(5)
-  auto_punch_time  String? @db.VarChar(5)
   created_at             DateTime @db.Timestamp(6)
   updated_at             DateTime @db.Timestamp(6)
 
@@ -128,8 +123,6 @@ model workload_adjustments {
   id                     String    @id @db.Uuid
   user_id                String    @db.Uuid
   daily_workload_minutes Int
-  start_time             String?   @db.VarChar(5)
-  end_time               String?   @db.VarChar(5)
   group_id               String?   @db.Uuid
   start_date             DateTime  @db.Date
   end_date               DateTime? @db.Date

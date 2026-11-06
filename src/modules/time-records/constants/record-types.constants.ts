@@ -1,1 +1,1 @@
-export const RECORD_TYPES = ['entrada', 'saida'] as const;
+export const RECORD_TYPES = ['entrada', 'pausa', 'retorno', 'saida'] as const;

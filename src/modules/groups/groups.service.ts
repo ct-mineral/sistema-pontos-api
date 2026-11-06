@@ -5,11 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { fortalezaDate, minutesBetween, parseClock } from '../../common/clock.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
-import { workedByGroup } from '../time-records/hours.js';
-
-const AUTO_PUNCH_QR_CODE_ID = '00000000-0000-4000-8000-000000000001';
 
 @Injectable()
 export class GroupsService {
@@ -17,11 +13,7 @@ export class GroupsService {
 
   async create(input: {
     name?: string;
-    startTime?: string;
-    endTime?: string;
-    breakStartTime?: string;
-    breakEndTime?: string;
-    autoPunchTime?: string;
+    dailyWorkloadMinutes?: number;
   }) {
     const schedule = readSchedule(input);
     const now = new Date();
@@ -30,11 +22,6 @@ export class GroupsService {
         id: randomUUID(),
         name: schedule.name,
         daily_workload_minutes: schedule.dailyWorkloadMinutes,
-        start_time: schedule.start.text,
-        end_time: schedule.end.text,
-        break_start_time: schedule.breakStart?.text ?? null,
-        break_end_time: schedule.breakEnd?.text ?? null,
-        auto_punch_time: schedule.autoPunch?.text ?? null,
         created_at: now,
         updated_at: now,
       },
@@ -46,11 +33,7 @@ export class GroupsService {
   async update(input: {
     id?: string;
     name?: string;
-    startTime?: string;
-    endTime?: string;
-    breakStartTime?: string;
-    breakEndTime?: string;
-    autoPunchTime?: string;
+    dailyWorkloadMinutes?: number;
   }) {
     if (!input.id) {
       throw new UnprocessableEntityException('Grupo é obrigatório');
@@ -66,11 +49,6 @@ export class GroupsService {
       data: {
         name: schedule.name,
         daily_workload_minutes: schedule.dailyWorkloadMinutes,
-        start_time: schedule.start.text,
-        end_time: schedule.end.text,
-        break_start_time: schedule.breakStart?.text ?? null,
-        break_end_time: schedule.breakEnd?.text ?? null,
-        auto_punch_time: schedule.autoPunch?.text ?? null,
         updated_at: new Date(),
       },
     });
@@ -148,113 +126,6 @@ export class GroupsService {
     });
 
     return groups.map((group) => toGroup(group, toPeople(group.users_groups)));
-  }
-
-  async autoPunchOpenEntries(at = new Date()) {
-    const today = fortalezaDate(at);
-    const groups = await this.prismaService.groups.findMany({
-      where: { status: true, auto_punch_time: { not: null } },
-      include: {
-        users_groups: { select: { user_id: true } },
-      },
-    });
-    const created: { userId: string; groupId: string; recordedAt: Date }[] = [];
-
-    for (const group of groups) {
-      const cutoff = new Date(`${today}T${group.auto_punch_time}:00-03:00`);
-      if (Number.isNaN(cutoff.getTime()) || cutoff > at) continue;
-
-      const dayStart = new Date(`${today}T00:00:00-03:00`);
-      for (const membership of group.users_groups) {
-        const result = await this.prismaService.$transaction(async (tx) => {
-          const latest = await tx.time_records.findFirst({
-            where: {
-              user_id: membership.user_id,
-              group_id: group.id,
-              recorded_at: { gte: dayStart, lte: cutoff },
-            },
-            orderBy: { recorded_at: 'desc' },
-          });
-          if (!latest || latest.type !== 'entrada') return null;
-
-          const dayRecords = await tx.time_records.findMany({
-            where: {
-              user_id: membership.user_id,
-              group_id: group.id,
-              recorded_at: { gte: dayStart, lte: cutoff },
-            },
-            orderBy: { recorded_at: 'asc' },
-          });
-          const workedMinutes =
-            workedByGroup(
-              dayRecords.map((item) => ({
-                type: item.type,
-                recorded_at: item.recorded_at,
-                group_id: item.group_id,
-                groups: null,
-              })),
-              cutoff,
-              [
-                {
-                  key: group.id,
-                  hours: {
-                    breakStartTime: group.break_start_time,
-                    breakEndTime: group.break_end_time,
-                  },
-                },
-              ],
-            ).get(group.id) ?? 0;
-          const missingMinutes = Math.max(
-            0,
-            group.daily_workload_minutes - workedMinutes,
-          );
-          const qrCode = await tx.qr_codes.upsert({
-            where: { id: AUTO_PUNCH_QR_CODE_ID },
-            update: { status: true, location: 'Batida automática' },
-            create: {
-              id: AUTO_PUNCH_QR_CODE_ID,
-              location: 'Batida automática',
-              status: true,
-              created_at: new Date(),
-            },
-          });
-          const record = await tx.time_records.create({
-            data: {
-              id: randomUUID(),
-              user_id: membership.user_id,
-              qr_code_id: qrCode.id,
-              group_id: group.id,
-              type: 'saida',
-              recorded_at: cutoff,
-              activity: 'Saída registrada automaticamente no horário limite do grupo.',
-              created_at: new Date(),
-            },
-          });
-          if (missingMinutes > 0) {
-            await tx.early_exit_justifications.create({
-              data: {
-                id: randomUUID(),
-                time_record_id: record.id,
-                user_id: membership.user_id,
-                scheduled_end: group.end_time ?? group.auto_punch_time!,
-                missing_minutes: missingMinutes,
-                created_at: new Date(),
-                updated_at: new Date(),
-              },
-            });
-          }
-          return record;
-        });
-        if (!result) continue;
-        created.push({
-          userId: result.user_id,
-          groupId: result.group_id!,
-          recordedAt: result.recorded_at,
-        });
-      }
-    }
-
-    return { processedAt: at, created: created.length, records: created };
   }
 
   async assign(input: { suapEnrollment?: string; groupId?: string }) {
@@ -373,113 +244,37 @@ export class GroupsService {
 
   private async assertShiftAvailable(
     userId: string,
-    group: { start_time: string | null },
+    _group: { id: string },
     ignoreMembershipId?: string,
   ) {
-    const shift = shiftOf(group.start_time);
-    if (!shift) {
-      throw new UnprocessableEntityException(
-        'O grupo precisa ter um horário de entrada',
-      );
-    }
-
-    const memberships = await this.prismaService.users_groups.findMany({
+    const _memberships = await this.prismaService.users_groups.findMany({
       where: {
         user_id: userId,
         groups: { status: true },
         ...(ignoreMembershipId ? { id: { not: ignoreMembershipId } } : {}),
       },
-      include: { groups: { select: { start_time: true } } },
     });
-
-    const taken = memberships.some(
-      (membership) => shiftOf(membership.groups.start_time) === shift,
-    );
-    if (taken) {
-      throw new ConflictException('Usuário já está em um grupo neste turno');
-    }
   }
 }
 
 function readSchedule(input: {
   name?: string;
-  startTime?: string;
-  endTime?: string;
-  breakStartTime?: string;
-  breakEndTime?: string;
-  autoPunchTime?: string;
+  dailyWorkloadMinutes?: number;
 }) {
   const name = input.name?.trim();
-  const start = parseClock(input.startTime);
-  const end = parseClock(input.endTime);
-  if (!name || !start || !end) {
-    throw new UnprocessableEntityException(
-      'Nome, horário de entrada e horário de saída são obrigatórios',
-    );
-  }
-
-  const breakStart = input.breakStartTime
-    ? parseClock(input.breakStartTime)
-    : null;
-  const breakEnd = input.breakEndTime ? parseClock(input.breakEndTime) : null;
-  const autoPunch = input.autoPunchTime ? parseClock(input.autoPunchTime) : null;
+  const dailyWorkloadMinutes = input.dailyWorkloadMinutes;
   if (
-    Boolean(input.breakStartTime) !== Boolean(input.breakEndTime) ||
-    (input.breakStartTime && !breakStart) ||
-    (input.breakEndTime && !breakEnd) ||
-    (input.autoPunchTime && !autoPunch)
+    !name ||
+    typeof dailyWorkloadMinutes !== 'number' ||
+    !Number.isInteger(dailyWorkloadMinutes) ||
+    dailyWorkloadMinutes <= 0
   ) {
     throw new UnprocessableEntityException(
-      'Os horários de início e fim do intervalo devem ser informados corretamente',
+      'Nome e carga horária diária válida são obrigatórios',
     );
   }
 
-  const scheduleMinutes = minutesBetween(start, end);
-  if (scheduleMinutes === null) {
-    throw new UnprocessableEntityException(
-      'A saída precisa ser depois da entrada',
-    );
-  }
-
-  const breakMinutes =
-    breakStart && breakEnd ? minutesBetween(breakStart, breakEnd) : 0;
-  if (
-    breakStart &&
-    breakEnd &&
-    (breakMinutes === null ||
-      breakStart.text < start.text ||
-      breakEnd.text > end.text)
-  ) {
-    throw new UnprocessableEntityException(
-      'O intervalo precisa estar entre a entrada e a saída',
-    );
-  }
-
-  if (autoPunch && (autoPunch.text < start.text || autoPunch.text > end.text)) {
-    throw new UnprocessableEntityException(
-      'O horário limite da batida automática precisa estar entre a entrada e a saída',
-    );
-  }
-
-  const dailyWorkloadMinutes = scheduleMinutes - (breakMinutes ?? 0);
-  if (dailyWorkloadMinutes <= 0) {
-    throw new UnprocessableEntityException(
-      'A carga diária precisa ser maior que zero',
-    );
-  }
-
-  return { name, start, end, breakStart, breakEnd, autoPunch, dailyWorkloadMinutes };
-}
-
-type Shift = 'manha' | 'tarde' | 'noite';
-
-function shiftOf(startTime: string | null): Shift | null {
-  const start = parseClock(startTime ?? undefined);
-  if (!start) return null;
-  const minutes = start.hours * 60 + start.minutes;
-  if (minutes < 12 * 60) return 'manha';
-  if (minutes < 18 * 60) return 'tarde';
-  return 'noite';
+  return { name, dailyWorkloadMinutes };
 }
 
 type GroupPerson = {
@@ -517,11 +312,6 @@ function toGroup(
     id: string;
     name: string;
     daily_workload_minutes: number;
-    start_time: string | null;
-    end_time: string | null;
-    break_start_time: string | null;
-    break_end_time: string | null;
-    auto_punch_time: string | null;
     status: boolean;
     created_at: Date;
     updated_at: Date;
@@ -532,11 +322,6 @@ function toGroup(
     id: group.id,
     name: group.name,
     dailyWorkloadMinutes: group.daily_workload_minutes,
-    startTime: group.start_time,
-    endTime: group.end_time,
-    breakStartTime: group.break_start_time,
-    breakEndTime: group.break_end_time,
-    autoPunchTime: group.auto_punch_time,
     status: group.status,
     members: people.length,
     people,

@@ -5,7 +5,6 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { minutesBetween, parseClock } from '../../common/clock.js';
 import { parseCalendarDate } from '../../common/calendar.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 
@@ -21,8 +20,6 @@ export class WorkloadAdjustmentsService {
         id: randomUUID(),
         user_id: prepared.user.id,
         daily_workload_minutes: prepared.dailyWorkloadMinutes,
-        start_time: prepared.start.text,
-        end_time: prepared.end.text,
         group_id: prepared.group.id,
         start_date: prepared.startDate,
         end_date: prepared.endDate,
@@ -53,8 +50,6 @@ export class WorkloadAdjustmentsService {
       data: {
         user_id: prepared.user.id,
         daily_workload_minutes: prepared.dailyWorkloadMinutes,
-        start_time: prepared.start.text,
-        end_time: prepared.end.text,
         group_id: prepared.group.id,
         start_date: prepared.startDate,
         end_date: prepared.endDate,
@@ -111,28 +106,21 @@ export class WorkloadAdjustmentsService {
   ) {
     const suapEnrollment = input.suapEnrollment?.trim();
     const groupId = input.groupId?.trim();
-    const start = parseClock(input.startTime);
-    const end = parseClock(input.endTime);
     const startDate = parseCalendarDate(input.startDate);
     const endDate = input.endDate ? parseCalendarDate(input.endDate) : null;
 
     if (
       !suapEnrollment ||
       !groupId ||
-      !start ||
-      !end ||
+      !Number.isInteger(input.dailyWorkloadMinutes) ||
+      (input.dailyWorkloadMinutes ?? 0) <= 0 ||
       !startDate ||
       (input.endDate && !endDate)
     ) {
       throw new UnprocessableEntityException('Dados do ajuste são inválidos');
     }
 
-    const dailyWorkloadMinutes = minutesBetween(start, end);
-    if (dailyWorkloadMinutes === null) {
-      throw new UnprocessableEntityException(
-        'A saída precisa ser depois da entrada',
-      );
-    }
+    const dailyWorkloadMinutes = input.dailyWorkloadMinutes!;
 
     if (endDate && endDate < startDate) {
       throw new UnprocessableEntityException(
@@ -174,7 +162,7 @@ export class WorkloadAdjustmentsService {
       throw new ConflictException('Já existe ajuste nesse período');
     }
 
-    return { user, group, dailyWorkloadMinutes, start, end, startDate, endDate };
+    return { user, group, dailyWorkloadMinutes, startDate, endDate };
   }
 }
 
@@ -186,8 +174,7 @@ const adjustmentInclude = {
 type AdjustmentInput = {
   suapEnrollment?: string;
   groupId?: string;
-  startTime?: string;
-  endTime?: string;
+  dailyWorkloadMinutes?: number;
   startDate?: string;
   endDate?: string;
 };
@@ -195,8 +182,6 @@ type AdjustmentInput = {
 function toAdjustment(adjustment: {
   id: string;
   daily_workload_minutes: number;
-  start_time: string | null;
-  end_time: string | null;
   start_date: Date;
   end_date: Date | null;
   created_at: Date;
@@ -209,8 +194,6 @@ function toAdjustment(adjustment: {
     groupId: adjustment.groups?.id ?? null,
     groupName: adjustment.groups?.name ?? null,
     dailyWorkloadMinutes: adjustment.daily_workload_minutes,
-    startTime: adjustment.start_time,
-    endTime: adjustment.end_time,
     startDate: adjustment.start_date,
     endDate: adjustment.end_date,
     createdAt: adjustment.created_at,

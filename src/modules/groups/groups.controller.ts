@@ -1,12 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Headers,
-  Post,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { Public } from '../../common/decorators/public.decorator.js';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { AllowViewer, Roles } from '../auth/decorator/roles.decorator.js';
 import { GroupsService } from './groups.service.js';
 
@@ -20,11 +12,7 @@ export class GroupsController {
     @Body()
     body: {
       name?: string;
-      startTime?: string;
-      endTime?: string;
-      breakStartTime?: string;
-      breakEndTime?: string;
-      autoPunchTime?: string;
+      dailyWorkloadMinutes?: number;
     },
   ) {
     return this.groupsService.create(body);
@@ -35,16 +23,6 @@ export class GroupsController {
   @Get('list')
   list() {
     return this.groupsService.list();
-  }
-
-  @Public()
-  @Get('auto-punch')
-  autoPunch(@Headers('authorization') authorization?: string) {
-    const secret = process.env.AUTO_PUNCH_SECRET;
-    if (!secret || authorization !== `Bearer ${secret}`) {
-      throw new UnauthorizedException();
-    }
-    return this.groupsService.autoPunchOpenEntries();
   }
 
   @Roles('SERVIDOR')
@@ -72,11 +50,7 @@ export class GroupsController {
     body: {
       id?: string;
       name?: string;
-      startTime?: string;
-      endTime?: string;
-      breakStartTime?: string;
-      breakEndTime?: string;
-      autoPunchTime?: string;
+      dailyWorkloadMinutes?: number;
     },
   ) {
     return this.groupsService.update(body);

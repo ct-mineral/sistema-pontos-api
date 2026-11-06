@@ -1,5 +1,4 @@
 import { isRefusedExit } from './sequence.js';
-import { clockMinutes, fortalezaDate } from '../../common/clock.js';
 
 export type GroupHours = {
   id: string | null;
@@ -21,10 +20,6 @@ export type PunchRecord = {
   groups: {
     id: string;
     name: string;
-    start_time: string | null;
-    end_time: string | null;
-    break_start_time: string | null;
-    break_end_time: string | null;
     daily_workload_minutes: number;
   } | null;
   early_exit_justifications?: { status: string } | null;
@@ -38,16 +33,10 @@ export function plansFrom(
   groups: {
     id: string;
     name: string;
-    start_time: string | null;
-    end_time: string | null;
-    break_start_time: string | null;
-    break_end_time: string | null;
     daily_workload_minutes: number;
   }[],
   adjustments: {
     group_id: string | null;
-    start_time: string | null;
-    end_time: string | null;
     daily_workload_minutes: number;
   }[],
 ) {
@@ -62,8 +51,8 @@ export function plansFrom(
         hours: {
           id: null,
           name: 'Ajuste individual',
-          startTime: legacy.start_time,
-          endTime: legacy.end_time,
+          startTime: null,
+          endTime: null,
           breakStartTime: null,
           breakEndTime: null,
           expectedMinutes: legacy.daily_workload_minutes,
@@ -81,10 +70,10 @@ export function plansFrom(
       hours: {
         id: group.id,
         name: group.name,
-        startTime: source?.start_time ?? group.start_time,
-        endTime: source?.end_time ?? group.end_time,
-        breakStartTime: group.break_start_time,
-        breakEndTime: group.break_end_time,
+        startTime: null,
+        endTime: null,
+        breakStartTime: null,
+        breakEndTime: null,
         expectedMinutes:
           source?.daily_workload_minutes ?? group.daily_workload_minutes,
       },
@@ -95,33 +84,17 @@ export function plansFrom(
 export function workedByGroup(
   records: PunchRecord[],
   end: Date,
-  schedules: {
-    key: string;
-    hours: Pick<GroupHours, 'breakStartTime' | 'breakEndTime'>;
-  }[] = [],
+  _schedules: { key: string; hours: Pick<GroupHours, 'breakStartTime' | 'breakEndTime'> }[] = [],
 ) {
   const totals = new Map<string, number>();
-  const scheduleByGroup = new Map(
-    schedules.map((schedule) => [schedule.key, schedule.hours]),
-  );
   let open: {
     at: Date;
     key: string;
-    breakStartTime: string | null;
-    breakEndTime: string | null;
   } | null = null;
-  const add = (
-    key: string,
-    start: Date,
-    finish: Date,
-    schedule?: Pick<GroupHours, 'breakStartTime' | 'breakEndTime'>,
-  ) => {
-    const breakStart = schedule?.breakStartTime;
-    const breakEnd = schedule?.breakEndTime;
+  const add = (key: string, start: Date, finish: Date) => {
     totals.set(
       key,
-      (totals.get(key) ?? 0) +
-        elapsedMinutesExcludingBreak(start, finish, breakStart, breakEnd),
+      (totals.get(key) ?? 0) + elapsedMinutes(start, finish),
     );
   };
 
@@ -132,26 +105,30 @@ export function workedByGroup(
       open = {
         at: record.recorded_at,
         key,
-        breakStartTime:
-          scheduleByGroup.get(key)?.breakStartTime ??
-          record.groups?.break_start_time ??
-          null,
-        breakEndTime:
-          scheduleByGroup.get(key)?.breakEndTime ??
-          record.groups?.break_end_time ??
-          null,
+      };
+      continue;
+    }
+    if (record.type === 'pausa' && open) {
+      add(open.key, open.at, record.recorded_at);
+      open = null;
+      continue;
+    }
+    if (record.type === 'retorno') {
+      open = {
+        at: record.recorded_at,
+        key: groupKey(record.group_id),
       };
       continue;
     }
     if (record.type === 'saida' && open) {
-      add(open.key, open.at, record.recorded_at, open);
+      add(open.key, open.at, record.recorded_at);
       open = null;
     }
   }
 
   if (open) {
     const limit = new Date() < end ? new Date() : end;
-    add(open.key, open.at, limit, open);
+    add(open.key, open.at, limit);
   }
 
   return totals;
@@ -332,6 +309,21 @@ export function punchIntervals(
       open = { at: record.recorded_at, groupId: record.group_id };
       continue;
     }
+    if (record.type === 'pausa' && open) {
+      rows.push({
+        entryAt: open.at,
+        exitAt: record.recorded_at,
+        groupId: open.groupId,
+        description: null,
+        refused: false,
+      });
+      open = null;
+      continue;
+    }
+    if (record.type === 'retorno') {
+      open = { at: record.recorded_at, groupId: record.group_id };
+      continue;
+    }
     if (record.type === 'saida') {
       rows.push({
         entryAt: open?.at ?? null,
@@ -361,34 +353,3 @@ function elapsedMinutes(start: Date, end: Date) {
   return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 60000));
 }
 
-function elapsedMinutesExcludingBreak(
-  start: Date,
-  end: Date,
-  breakStart: string | null | undefined,
-  breakEnd: string | null | undefined,
-) {
-  const worked = elapsedMinutes(start, end);
-  if (!breakStart || !breakEnd) return worked;
-
-  const day = fortalezaDate(start);
-  const breakStartAt = new Date(`${day}T${breakStart}:00-03:00`);
-  const breakEndAt = new Date(`${day}T${breakEnd}:00-03:00`);
-  if (
-    Number.isNaN(breakStartAt.getTime()) ||
-    Number.isNaN(breakEndAt.getTime())
-  ) {
-    return worked;
-  }
-
-  const startMinutes = clockMinutes(breakStart);
-  const endMinutes = clockMinutes(breakEnd);
-  if (endMinutes <= startMinutes) return worked;
-
-  const overlapStart = Math.max(start.getTime(), breakStartAt.getTime());
-  const overlapEnd = Math.min(end.getTime(), breakEndAt.getTime());
-  const breakMinutes = Math.max(
-    0,
-    Math.floor((overlapEnd - overlapStart) / 60000),
-  );
-  return Math.max(0, worked - breakMinutes);
-}
