@@ -68,7 +68,7 @@ export class TimeRecordsService {
     const last = history.find((record) => !isRefusedExit(record)) ?? null;
 
     if (!nextRecordTypes(last?.type).includes(type as never)) {
-      throw new UnprocessableEntityException('Sequência de batida inválida');
+      throw new UnprocessableEntityException('Sequência de registro inválido');
     }
 
     const now = new Date();
@@ -160,7 +160,7 @@ export class TimeRecordsService {
     }
 
     if (matching.length > 1) {
-      throw new UnprocessableEntityException('Informe o grupo da batida');
+      throw new UnprocessableEntityException('Informe o grupo do registro');
     }
     if (matching.length === 0)
       throw new UnprocessableEntityException('Usuário sem grupo');
