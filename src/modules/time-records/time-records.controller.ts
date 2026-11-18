@@ -47,6 +47,15 @@ export class TimeRecordsController {
   }
 
   @Roles('ALUNO', 'PRESTADOR', 'SERVIDOR')
+  @Post('note')
+  saveNote(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: { recordId?: string; note?: string },
+  ) {
+    return this.timeRecordsService.saveNote(user.id, body);
+  }
+
+  @Roles('ALUNO', 'PRESTADOR', 'SERVIDOR')
   @Post('justification')
   saveReason(
     @CurrentUser() user: AuthenticatedUser,
@@ -113,7 +122,10 @@ export class TimeRecordsController {
     @Param('allowanceId') allowanceId: string,
     @Param('documentId') documentId: string,
   ) {
-    const document = await this.timeRecordsService.readAllowanceDocument(allowanceId, documentId);
+    const document = await this.timeRecordsService.readAllowanceDocument(
+      allowanceId,
+      documentId,
+    );
     const fileName = document.file_name.replace(/["\r\n]/g, '');
     return new StreamableFile(Buffer.from(document.content), {
       type: document.mime_type,
@@ -134,7 +146,13 @@ export class TimeRecordsController {
   @Post('justifications/review')
   review(
     @CurrentUser() user: AuthenticatedUser,
-    @Body() body: { id?: string; status?: string; makeupDate?: string; makeupStart?: string },
+    @Body()
+    body: {
+      id?: string;
+      status?: string;
+      makeupDate?: string;
+      makeupStart?: string;
+    },
   ) {
     return this.timeRecordsService.review(user.id, body);
   }

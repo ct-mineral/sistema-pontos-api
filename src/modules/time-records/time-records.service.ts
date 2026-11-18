@@ -6,9 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { Express } from 'express';
-import {
-  fortalezaDate,
-} from '../../common/clock.js';
+import { fortalezaDate } from '../../common/clock.js';
 import { PrismaService } from '../../infra/prisma/prisma.service.js';
 import { QrCodesService } from '../qr-codes/qr-codes.service.js';
 import { allowanceInclude, safeFileName, toAllowance } from './allowance.js';
@@ -133,12 +131,12 @@ export class TimeRecordsService {
 
     const memberships = await this.groupsService.findActive(userId);
     const groups = memberships.map((group) => ({
-        id: group.id,
-        name: group.name,
-        startTime: null,
-        endTime: null,
-        matchesNow: true,
-      }));
+      id: group.id,
+      name: group.name,
+      startTime: null,
+      endTime: null,
+      matchesNow: true,
+    }));
     const matching = groups.filter((group) => group.matchesNow);
     return {
       openGroup: null,
@@ -164,7 +162,8 @@ export class TimeRecordsService {
     if (matching.length > 1) {
       throw new UnprocessableEntityException('Informe o grupo da batida');
     }
-    if (matching.length === 0) throw new UnprocessableEntityException('Usuário sem grupo');
+    if (matching.length === 0)
+      throw new UnprocessableEntityException('Usuário sem grupo');
     return matching[0].id;
   }
 
@@ -204,6 +203,50 @@ export class TimeRecordsService {
     });
 
     return toRecord(updated, updated.qr_codes, entry, updated.groups);
+  }
+
+  async saveNote(userId: string, input: { recordId?: string; note?: string }) {
+    const recordId = input.recordId?.trim();
+    const note = input.note?.trim();
+    if (!recordId || !note) {
+      throw new UnprocessableEntityException(
+        'Registro e observação são obrigatórios',
+      );
+    }
+    if (note.length > 500) {
+      throw new UnprocessableEntityException(
+        'A observação pode ter no máximo 500 caracteres',
+      );
+    }
+
+    const record = await this.prismaService.time_records.findFirst({
+      where: { id: recordId, user_id: userId },
+    });
+    if (!record) {
+      throw new NotFoundException('Registro não encontrado');
+    }
+
+    const updated = await this.prismaService.time_records.update({
+      where: { id: record.id },
+      data: { note },
+      include: {
+        qr_codes: true,
+        groups: { select: { id: true, name: true } },
+        early_exit_justifications: true,
+      },
+    });
+    const entry =
+      updated.type === 'saida'
+        ? await this.previousEntry(userId, updated.recorded_at)
+        : null;
+
+    return toRecord(
+      updated,
+      updated.qr_codes,
+      entry,
+      updated.groups,
+      updated.early_exit_justifications,
+    );
   }
 
   async saveReason(

@@ -42,6 +42,7 @@ export function toRecord(
     recorded_at: Date;
     created_at: Date;
     activity: string | null;
+    note?: string | null;
   },
   qrCode: { id: string; location: string },
   entry?: { id: string; recorded_at: Date } | null,
@@ -62,6 +63,7 @@ export function toRecord(
     recordedAt: record.recorded_at,
     createdAt: record.created_at,
     activity: record.activity,
+    note: record.note ?? null,
     entry: entry ? { id: entry.id, recordedAt: entry.recorded_at } : null,
     group: group ? { id: group.id, name: group.name } : null,
     qrCode: {
